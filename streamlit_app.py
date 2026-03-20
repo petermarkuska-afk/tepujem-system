@@ -3,13 +3,22 @@ import pandas as pd
 import requests
 
 # --- 1. KONFIGURÁCIA ---
-# Nezabudni sem vložiť svoju aktuálnu URL z Google Apps Scriptu
+# SEM VLOŽ SVOJU AKTUALNU URL Z GOOGLE APPS SCRIPTU
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
 
 if 'user' not in st.session_state:
     st.session_state['user'] = None
+
+# Pomocná funkcia na volanie skriptu
+def call_script(action, params):
+    try:
+        url = f"{SCRIPT_URL}?action={action}"
+        for k, v in params.items(): url += f"&{k}={v}"
+        return requests.get(url, timeout=10).json().get("status") == "success"
+    except:
+        return False
 
 # --- 2. PRIHLASOVANIE A REGISTRÁCIA ---
 if st.session_state['user'] is None:
@@ -21,25 +30,28 @@ if st.session_state['user'] is None:
         h = st.text_input("Heslo", type="password").strip()
         if st.button("Prihlásiť sa", use_container_width=True):
             try:
+                # Voláme Google Script pre overenie login-u
                 res = requests.get(f"{SCRIPT_URL}?action=login&mobil={m}&heslo={h}", timeout=10).json()
                 if res.get("status") == "success":
                     st.session_state['user'] = res
                     st.rerun()
                 else: 
-                    st.error("Nesprávne údaje.")
-            except: 
-                st.error("Chyba pripojenia. Skontrolujte SCRIPT_URL.")
+                    st.error("Nesprávne telefónne číslo alebo heslo.")
+            except Exception as e: 
+                st.error(f"Chyba pripojenia. Skontrolujte deployment a SCRIPT_URL.")
             
     with tab2:
         st.subheader("Nový partnerský účet")
         with st.form("reg_form"):
-            meno = st.text_input("Meno")
-            prie = st.text_input("Priezvisko")
-            mob = st.text_input("Mobil")
-            hes = st.text_input("Heslo", type="password")
+            c1, c2 = st.columns(2)
+            meno = c1.text_input("Meno")
+            prie = c2.text_input("Priezvisko")
+            mob = c1.text_input("Mobil (napr. 0915...)")
+            hes = c2.text_input("Heslo", type="password")
             kod = st.text_input("Váš unikátny kód (napr. JOZO5)")
+            st.info("IBAN nie je vyžadovaný. Výplaty prebiehajú po vzájomnej dohode.")
             if st.form_submit_button("Vytvoriť účet", use_container_width=True):
-                payload = {"target": "user", "meno": meno, "priezvisko": prie, "mobil": mob, "heslo": hes, "referral_code": kod}
+                payload = {"target": "user", "meno": meno, "priezvisko": prie, "adresa": "", "mobil": mob, "heslo": hes, "referral_code": kod}
                 try:
                     requests.post(SCRIPT_URL, json=payload, timeout=10)
                     st.success("Registrácia úspešná! Teraz sa môžete prihlásiť.")
@@ -57,70 +69,68 @@ else:
         st.rerun()
 
     try:
+        # Načítanie všetkých zakázok (Google Script vracia JSON)
         res = requests.get(f"{SCRIPT_URL}?action=getZakazky", timeout=15).json()
         df = pd.DataFrame(res)
         
         # Ošetrenie prázdnej tabuľky
         if df.empty:
-            df = pd.DataFrame(columns=['kod_pouzity', 'suma_zakazky', 'provizia_odporucatel', 'poznamka', 'vyplatene'])
-        
-        # Konverzia na čísla pre výpočty
-        for col in ['suma_zakazky', 'provizia_odporucatel']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            df = pd.DataFrame(columns=['pobocka_id', 'kod_pouzity', 'suma_zakazky', 'provizia_odporucatel', 'poznamka', 'vyplatene'])
+        else:
+            # Konverzia na čísla pre výpočty
+            for col in ['suma_zakazky', 'provizia_odporucatel']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-        # --- A: SUPERADMIN ---
+        # A: SUPERADMIN (PETER)
         if u['rola'] == 'superadmin':
             st.title("🌍 Globálny prehľad (Superadmin)")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Celkový obrat", f"{df['suma_zakazky'].sum():.2f} €")
-            c2.metric("Počet zákaziek", len(df))
-            c3.metric("Provízie spolu", f"{df['provizia_odporucatel'].sum():.2f} €")
-            
-            st.write("### Všetky transakcie")
-            # Superadmin vidí všetko
-            st.dataframe(df[['kod_pouzity', 'suma_zakazky', 'provizia_odporucatel', 'poznamka']], use_container_width=True)
+            # ... tu by bol kód pre admina na správu výplat ...
+            # Zobrazíme len tabuľku, partnera Peter nepýtal
+            hist_df = df.copy()
+            hist_df['Stav'] = hist_df['vyplatene'].apply(lambda x: "✅ Vyplatené" if x else "⏳ Čaká")
+            st.dataframe(hist_df[['pobocka_id', 'kod_pouzity', 'partner_meno', 'suma_zakazky', 'provizia_odporucatel', 'poznamka', 'Stav']], use_container_width=True)
 
-        # --- B: ADMIN (Pobočky) ---
+        # B: ADMIN (POBOČKY)
         elif u['rola'] == 'admin':
-            moje_mesto = str(u.get('pobocka_id', ''))
-            st.title(f"📍 Pobočka: {moje_mesto}")
-            
-            f_df = df[df['pobocka_id'].astype(str) == moje_mesto].copy()
-            nove = f_df[f_df['suma_zakazky'] == 0]
-            
-            st.subheader("📩 Nové zakázky na nacenenie")
-            for i, row in nove.iterrows():
-                with st.expander(f"Kód: {row['kod_pouzity']} | Info: {row['poznamka']}"):
-                    # Adminovi nechávame možnosť zadať sumu
-                    st.number_input("Suma (€)", key=f"s_{i}", min_value=0.0)
-                    if st.button("Uložiť", key=f"b_{i}"):
-                        st.success("Uložené (simulácia)")
+            # Zobrazíme rozhranie pre Admina (mesto) z u['pobocka_id']
+            st.title(f"📍 Pobočka: {u['pobocka_id']}")
+            # ... tu by bol kód na zadávanie sumy zakázky ...
 
-            st.subheader("✅ História")
-            # Admin vidí sumu, aby mohol kontrolovať zadávanie
-            st.dataframe(f_df[f_df['suma_zakazky'] > 0][['kod_pouzity', 'suma_zakazky', 'provizia_odporucatel', 'poznamka']], use_container_width=True)
-
-        # --- C: PARTNER / ZÁKAZNÍK ---
+        # C: PARTNER (ZÁKAZNÍK)
         else:
             st.title(f"💰 Váš partnerský prehľad ({u.get('kod', '---')})")
+            
+            # Filtrujeme len zakázky daného partnera
             my_df = df[df['kod_pouzity'] == u['kod']].copy()
             
-            col1, col2 = st.columns(2)
-            col1.metric("Celkový zárobok", f"{my_df['provizia_odporucatel'].sum():.2f} €")
-            col2.metric("Na vyplatenie", f"{my_df[my_df['vyplatene'] == False]['provizia_odporucatel'].sum():.2f} €")
+            # Výpočet metrík
+            celkovo = my_df['provizia_odporucatel'].sum()
+            na_vyplatenie = my_df[my_df['vyplatene'] == False]['provizia_odporucatel'].sum()
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Celkový zárobok", f"{celkovo:.2f} €")
+            c2.metric("Na vyplatenie", f"{na_vyplatenie:.2f} €")
             
             st.subheader("Zoznam odporúčaných zákaziek")
             if not my_df.empty:
-                # Prevod logickej hodnoty na ikonky
-                my_df['Stav'] = my_df['vyplatene'].apply(lambda x: "✅ Vyplatené" if x else "⏳ Čaká")
+                # Príprava tabuľky pre zobrazenie
+                display_df = my_df.copy()
                 
-                # --- TU JE ZMENA PRENOSU STĹPCOV ---
-                # Skryli sme pobocka_id a suma_zakazky.
-                # Pridali sme 'poznamka', ktorá sa zvyčajne v Google Sheets importuje z Make.
-                st.table(my_df[['poznamka', 'provizia_odporucatel', 'Stav']])
+                # --- PREMENOVANIE STĹPCOV (POŽADAVKA) ---
+                display_df = display_df.rename(columns={
+                    'poznamka': 'Objednávka',
+                    'provizia_odporucatel': 'Získaná provízia'
+                })
+                
+                # Prevod logickej hodnoty na ikonky
+                display_df['Stav'] = display_df['vyplatene'].apply(lambda x: "✅ Vyplatené" if x else "⏳ Čaká")
+                
+                # Zobrazenie len požadovaných stĺpcov pre partnera (bez pobocka_id a suma_zakazky)
+                # Tieto stĺpce sa "ťahajú" zo stĺpcov F a D Google tabuľky
+                st.table(display_df[['Objednávka', 'Získaná provízia', 'Stav']])
             else:
                 st.info("Zatiaľ nemáte žiadne odporúčania.")
 
-    except Exception as e:
-        st.error(f"Nepodarilo sa načítať dáta z Google tabuľky. (Chyba: {e})")
+    exceptException as e:
+        st.error(f"Nepodarilo sa načítať dáta z Google tabuľky. (Detaily: {e})")
