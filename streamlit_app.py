@@ -4,7 +4,7 @@ import requests
 
 # --- KONFIGURÁCIA ---
 # SEM VLOŽTE SVOJU URL Z APPS SCRIPTU (Web App URL)
-SCRIPT_URL = "SEM_VLOZ_SVOJU_URL_Z_APPS_SCRIPTU"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyjAB40A4smgumuldfN34harY1TkudIYTTglikbci9PvC1XLxKCUftvQulqtW65Y8-4Bg/exec"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
 
