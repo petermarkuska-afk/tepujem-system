@@ -2,133 +2,131 @@ import streamlit as st
 import pandas as pd
 import requests
 
-# --- KONFIGURÁCIA (Doplň svoje údaje) ---
-# 1. URL z Google Apps Script (končí na /exec)
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyjAB40A4smgumuldfN34harY1TkudIYTTglikbci9PvC1XLxKCUftvQulqtW65Y8-4Bg/exec"
-
-# 2. CSV link z tabuľky Zakazky (Súbor -> Zdieľať -> Publikovať na webe -> CSV)
-ZAKAZKY_CSV = "https://docs.google.com/spreadsheets/d/1DHUfPU56bqQJbzVjqIGgvpTbDtGQcD_TjVFaLZjXUAA/edit?usp=sharingK"
+# --- KONFIGURÁCIA ---
+# SEM VLOŽTE SVOJU URL Z APPS SCRIPTU (Web App URL)
+SCRIPT_URL = "SEM_VLOZ_SVOJU_URL_Z_APPS_SCRIPTU"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
 
-# Inicializácia session state
+# Inicializácia prihlásenia
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
-# --- ODHLÁSENIE ---
 def logout():
     st.session_state['user'] = None
     st.rerun()
 
-# --- HLAVNÁ LOGIKA ---
+# --- 1. PRIHLASOVACIA OBRAZOVKA ---
 if st.session_state['user'] is None:
     st.title("💰 Provízny systém TEPUJEM")
-    tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia"])
+    
+    tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia partnera"])
 
     with tab1:
-        st.subheader("Vstup pre partnerov")
-        mob = st.text_input("Mobilné číslo (napr. 0915...)").strip()
+        st.subheader("Vstup do portálu")
+        mob = st.text_input("Mobilné číslo (login)").strip()
         hes = st.text_input("Heslo", type="password").strip()
         
         if st.button("Prihlásiť sa"):
             if mob and hes:
-                with st.spinner("Overujem..."):
+                with st.spinner("Overujem údaje..."):
                     try:
-                        url = f"{SCRIPT_URL}?action=login&mobil={mob}&heslo={hes}"
-                        r = requests.get(url, timeout=10).json()
-                        if r["status"] == "success":
-                            st.session_state['user'] = r
+                        res = requests.get(f"{SCRIPT_URL}?action=login&mobil={mob}&heslo={hes}", timeout=15).json()
+                        if res["status"] == "success":
+                            st.session_state['user'] = res
                             st.rerun()
                         else:
-                            st.error("Nesprávne údaje. Skontrolujte mobil a heslo.")
+                            st.error("Nesprávne meno alebo heslo.")
                     except Exception as e:
-                        st.error(f"Chyba pripojenia: {e}")
+                        st.error(f"Nepodarilo sa spojiť s databázou. Skontrolujte SCRIPT_URL. ({e})")
             else:
-                st.warning("Prosím, vyplňte mobil aj heslo.")
+                st.warning("Vyplňte všetky údaje.")
 
     with tab2:
-        with st.form("registration_form"):
-            st.subheader("Registrácia nového partnera")
-            m = st.text_input("Meno")
-            p = st.text_input("Priezvisko")
-            a = st.text_input("Adresa (pre Superadmina)")
+        st.subheader("Nový partnerský profil")
+        with st.form("reg_form"):
+            col1, col2 = st.columns(2)
+            meno = col1.text_input("Meno")
+            prie = col2.text_input("Priezvisko")
+            adr = st.text_input("Adresa / Región")
             mob_reg = st.text_input("Mobil (bude slúžiť ako login)")
-            hes_reg = st.text_input("Heslo")
-            kod = st.text_input("Váš unikátny kód (napr. PETO10)")
+            hes_reg = st.text_input("Heslo (minimálne 6 znakov)")
+            kod = st.text_input("Váš unikátny zľavový kód (napr. MAREK10)")
             
-            if st.form_submit_button("Vytvoriť profil"):
-                if all([m, p, mob_reg, hes_reg, kod]):
+            if st.form_submit_button("Zaregistrovať sa"):
+                if all([meno, prie, mob_reg, hes_reg, kod]):
                     payload = {
-                        "meno": m, "priezvisko": p, "adresa": a, 
+                        "meno": meno, "priezvisko": prie, "adresa": adr, 
                         "mobil": mob_reg, "heslo": hes_reg, "referral_code": kod
                     }
                     try:
-                        res = requests.post(SCRIPT_URL, json=payload, timeout=10).json()
-                        if res["status"] == "success":
-                            st.success("Profil vytvorený! Teraz sa môžete prihlásiť.")
-                        else:
-                            st.error("Chyba pri registrácii. Kód možno už existuje.")
+                        resp = requests.post(SCRIPT_URL, json=payload, timeout=15).json()
+                        st.success("Registrácia úspešná! Teraz sa môžete prihlásiť.")
                     except:
-                        st.error("Chyba spojenia s Google tabuľkou.")
+                        st.error("Chyba pri registrácii. Skúste to neskôr.")
                 else:
-                    st.warning("Všetky polia sú povinné.")
+                    st.warning("Prosím, vyplňte všetky polia.")
 
+# --- 2. DASHBOARD PRE PRIHLÁSENÝCH ---
 else:
-    # --- PRIHLÁSENÝ POUŽÍVATEĽ ---
     u = st.session_state['user']
     
     # Sidebar menu
-    st.sidebar.title(f"👤 {u['meno']}")
-    st.sidebar.write(f"Rola: **{u['rola'].upper()}**")
-    if st.sidebar.button("Odhlásiť sa"):
-        logout()
+    st.sidebar.title(f"👤 {u['meno']} {u['priezvisko']}")
+    st.sidebar.info(f"Rola: **{u['rola'].upper()}**")
+    st.sidebar.button("Odhlásiť sa", on_click=logout)
 
-    st.title(f"Vitajte v portáli, {u['meno']}")
+    st.title("Prehľad objednávok a provízií")
 
     try:
-        # Načítanie dát zo zdieľaného CSV (Tabuľka Zakazky)
-        df = pd.read_csv(ZAKAZKY_CSV)
-        
-        # 1. LOGIKA PRE SUPERADMINA
+        # Sťahovanie dát zo súkromnej tabuľky
+        with st.spinner("Načítavam dáta z cloudu..."):
+            response = requests.get(f"{SCRIPT_URL}?action=getZakazky", timeout=15)
+            # Prevod JSON na DataFrame
+            df = pd.DataFrame(response.json())
+
+        # --- FILTROVANIE PODĽA ROLY ---
+
+        # A. SUPERADMIN (Vidí všetko)
         if u['rola'] == 'superadmin':
-            st.header("🌍 Celkový prehľad (SUPERADMIN)")
-            st.info("Vidíte všetky objednávky. Regióny priraďujte v stĺpci 'pobocka_id' v Google Tabuľke.")
+            st.header("🌍 Administrátorská konzola (Všetky regióny)")
             st.dataframe(df, use_container_width=True)
             
-            col1, col2 = st.columns(2)
-            col1.metric("Celkový obrat", f"{df['suma_zakazky'].sum()} €")
-            col2.metric("Počet objednávok", len(df))
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Celkový obrat", f"{pd.to_numeric(df['suma_zakazky']).sum()} €")
+            c2.metric("Počet zákaziek", len(df))
+            c3.metric("Vyplatené provízie", f"{pd.to_numeric(df['provizia_odporucatel']).sum()} €")
 
-        # 2. LOGIKA PRE ADMINA (Regionálneho)
+        # B. ADMIN REGIÓNU (Vidí len svoju pobočku)
         elif u['rola'] == 'admin':
-            # Admin má svoj región priradený v poli 'kod' (napr. Nitra)
-            moj_region = u['kod']
-            st.header(f"📍 Región: {moj_region}")
+            moj_region = u['kod'] # Admin má región v poli 'kod'
+            st.header(f"📍 Regionálny prehľad: {moj_region}")
             
-            # Filtrujeme dáta len pre tento región
-            region_data = df[df['pobocka_id'] == moj_region]
+            # Filter pre pobocka_id
+            df_region = df[df['pobocka_id'].astype(str) == str(moj_region)]
             
-            if region_data.empty:
-                st.warning(f"Pre región {moj_region} zatiaľ neboli priradené žiadne objednávky.")
+            if df_region.empty:
+                st.warning(f"V regióne {moj_region} zatiaľ nie sú žiadne priradené objednávky.")
             else:
-                st.dataframe(region_data, use_container_width=True)
-                st.metric(f"Obrat v regióne {moj_region}", f"{region_data['suma_zakazky'].sum()} €")
+                st.dataframe(df_region, use_container_width=True)
+                st.metric(f"Obrat - {moj_region}", f"{pd.to_numeric(df_region['suma_zakazky']).sum()} €")
 
-        # 3. LOGIKA PRE ZÁKAZNÍKA (Referral)
+        # C. ZÁKAZNÍK / PARTNER (Vidí len svoje provízie)
         else:
-            st.header("💰 Vaše provízie")
-            st.success(f"Váš odporúčací kód: **{u['kod']}**")
+            st.header(f"💰 Váš partnerský účet ({u['kod']})")
             
-            # Filtrujeme len objednávky, kde bol použitý kód zákazníka
-            moje_data = df[df['kod_pouzity'] == u['kod']]
+            # Filter pre kod_pouzity
+            df_moje = df[df['kod_pouzity'].astype(str) == str(u['kod'])]
             
-            if moje_data.empty:
-                st.write("Zatiaľ nemáte žiadne úspešné odporúčania.")
+            if df_moje.empty:
+                st.info("Zatiaľ neboli evidované žiadne objednávky s Vaším kódom.")
             else:
-                total_provizia = moje_data['provizia_odporucatel'].sum()
-                st.metric("Zárobok celkom", f"{total_provizia} €")
-                st.write("Zoznam vašich odporúčaní:")
-                st.dataframe(moje_data[['pobocka_id', 'suma_zakazky', 'provizia_odporucatel']], use_container_width=True)
+                total = pd.to_numeric(df_moje['provizia_odporucatel']).sum()
+                st.metric("Váš doterajší zárobok", f"{total} €")
+                st.write("Detailný zoznam odporúčaní:")
+                # Zobrazíme len relevantné stĺpce pre zákazníka
+                st.table(df_moje[['pobocka_id', 'suma_zakazky', 'provizia_odporucatel']])
 
     except Exception as e:
-        st.error("Nepodarilo sa načítať dáta zo zákaziek. Skontrolujte, či je tabuľka publikovaná na webe ako CSV.")
+        st.error("Dáta momentálne nie sú k dispozícii. Skontrolujte, či v tabuľke 'Zakazky' nie sú prázdne riadky.")
+        st.info("Technický detail: " + str(e))
