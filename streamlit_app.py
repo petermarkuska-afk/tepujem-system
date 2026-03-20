@@ -4,10 +4,10 @@ import requests
 
 # --- KONFIGURÁCIA (Doplň svoje údaje) ---
 # 1. URL z Google Apps Script (končí na /exec)
-SCRIPT_URL = "SEM_VLOZ_SVOJU_URL_Z_APPS_SCRIPTU"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyjAB40A4smgumuldfN34harY1TkudIYTTglikbci9PvC1XLxKCUftvQulqtW65Y8-4Bg/exec"
 
 # 2. CSV link z tabuľky Zakazky (Súbor -> Zdieľať -> Publikovať na webe -> CSV)
-ZAKAZKY_CSV = "SEM_VLOZ_SVOJ_CSV_LINK"
+ZAKAZKY_CSV = "https://docs.google.com/spreadsheets/d/1DHUfPU56bqQJbzVjqIGgvpTbDtGQcD_TjVFaLZjXUAA/edit?usp=sharingK"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
 
