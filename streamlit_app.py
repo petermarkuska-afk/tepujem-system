@@ -1,36 +1,42 @@
 import streamlit as st
-from st_gsheets_connection import GSheetsConnection
+import pandas as pd
+import gspread
 
 st.set_page_config(page_title="Tepujem - Provízie", layout="wide")
-
 st.title("💰 Provízny systém TEPUJEM")
 
-# Pripojenie na Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Funkcia na načítanie dát cez verejný link (najjednoduchšia cesta)
+def load_data():
+    # Sem vložíš tvoj link na tabuľku, ale musí byť upravený na export
+    # Ak je tvoj link https://docs.google.com/spreadsheets/d/ABC/edit, 
+    # tak csv_url bude https://docs.google.com/spreadsheets/d/ABC/export?format=csv
+    sheet_url = st.secrets["gsheets_url"]
+    csv_url = sheet_url.replace('/edit#gid=', '/export?format=csv&gid=')
+    if '/edit' in csv_url:
+        csv_url = csv_url.split('/edit')[0] + '/export?format=csv'
+    
+    return pd.read_csv(csv_url)
 
 # Menu pre pobočky
 pobocka_list = ["Nitra", "Trnava", "Bratislava", "Super Admin"]
-auth = st.sidebar.selectbox("Vyberte pobočku / Rola:", pobocka_list)
+auth = st.sidebar.selectbox("Vyberte pobočku:", pobocka_list)
 
 try:
-    # Načítanie dát (URL vložíme neskôr do Streamlit Secrets)
-    df = conn.read(spreadsheet=st.secrets["gsheets_url"], ttl=0)
+    df = load_data()
 
     if auth == "Super Admin":
-        st.subheader("Kompletný prehľad pre majiteľa")
+        st.subheader("Kompletný prehľad")
         st.dataframe(df)
     else:
-        st.subheader(f"Zákazky pre pobočku: {auth}")
-        # Filter: ukážeme len riadky danej pobočky
-        if 'pobocka_id' in df.columns:
-            filtered_df = df[df['pobocka_id'] == auth]
-            if filtered_df.empty:
-                st.info("Zatiaľ žiadne zákazky pre túto pobočku.")
-            else:
-                st.write("Upravte sumu v tabuľke:")
-                st.data_editor(filtered_df)
+        st.subheader(f"Zákazky: {auth}")
+        # Hľadáme stĺpec pobocka_id
+        col_name = 'pobocka_id' 
+        if col_name in df.columns:
+            filtered_df = df[df[col_name] == auth]
+            st.data_editor(filtered_df)
         else:
-            st.error("V tabuľke chýba stĺpec 'pobocka_id'!")
+            st.error(f"V tabuľke nevidím stĺpec '{col_name}'. Máš ho v prvom riadku?")
 
 except Exception as e:
-    st.error(f"Ešte nie je nastavené prepojenie na Google Sheets. Chyba: {e}")
+    st.info("Čakám na správne prepojenie s Google Sheets...")
+    st.write(f"Technický detail: {e}")
