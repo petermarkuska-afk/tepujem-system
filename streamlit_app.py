@@ -109,17 +109,14 @@ else:
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
 
-    # Predvolené prázdne stĺpce pre prípad, že neexistujú používatelia
-    df['pobocka_odporucatela'] = None
-
     # --- JOIN USERS ---
     if not users.empty:
-        # Pripájame zľavový kód k používateľovi a ťaháme si aj jeho "pobočku" (stĺpec 'meno' v users_data)
+        # Pripájame zľavový kód k používateľovi a ťaháme si aj jeho "pobočku"
         users_renamed = users.rename(columns={
             'referral_code': 'kod_pouzity',
             'priezvisko': 'meno_user',
             'mobil': 'mobil_user',
-            'meno': 'pobocka_odporucatela'  # Toto je dôležité pre správne zaradenie pod admina
+            'meno': 'pobocka_odporucatela'
         })
 
         df = df.merge(
@@ -127,9 +124,14 @@ else:
             on='kod_pouzity',
             how='left'
         )
+    else:
+        # Poistka, ak by z nejakého dôvodu tabuľka users bola úplne prázdna
+        df['pobocka_odporucatela'] = None
+        df['meno_user'] = None
+        df['mobil_user'] = None
 
-    # OPRAVENÉ: Ak bol použitý kód, priradíme zákazku pod pobočku majiteľa kódu (napr. Levice). 
-    # Ak kód chýba, riadime sa mestom z Make.com (napr. Jaromnica).
+    # Vytvorenie finálneho stĺpca pre priradenie pobočky 
+    # (Ak je kód zadaný a spárovaný s users_data, dá pobočku odporúčateľa. Inak použije tú z tabuľky transactions_data)
     df['pridelena_pobocka'] = df['pobocka_odporucatela'].fillna(df['pobocka_id'])
 
 
@@ -137,7 +139,7 @@ else:
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka_id')}")
 
-        # Filtrujeme dáta už podľa nášho nového "inteligentného" stĺpca 'pridelena_pobocka'
+        # Filtrujeme dáta podľa nášho "inteligentného" stĺpca 'pridelena_pobocka'
         if u['rola'] == 'superadmin':
             active_df = df 
         else:
