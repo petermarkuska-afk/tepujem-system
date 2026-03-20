@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import time
 
-# --- 1. KONFIGURÁCIA ---
+# --- 1. KONFIGURÁCIA (MASTER URL) ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
@@ -18,13 +18,13 @@ def call_script(action, params):
             url = f"{SCRIPT_URL}?action={action}"
             for k, v in params.items(): url += f"&{k}={v}"
             res = requests.get(url, timeout=25).json()
-            return res if action in ["login", "register"] else (res.get("status") == "success")
+            return res if action in ["login", "register", "getRegions"] else (res.get("status") == "success")
         except:
-            time.sleep(1.8) # Mierne dlhší čas medzi pokusmi pre lepšiu stabilitu
+            time.sleep(1.8)
     return None
 
 def get_data_stable():
-    """ Robustné načítanie dát, ktoré nepadne pri prvom zaváhaní servera """
+    """ Robustné načítanie dát tabuľky """
     for _ in range(3):
         try:
             resp = requests.get(f"{SCRIPT_URL}?action=getZakazky", timeout=25)
@@ -33,94 +33,113 @@ def get_data_stable():
             time.sleep(2)
     return pd.DataFrame()
 
-# --- 2. VSTUPNÁ OBRAZOVKA ---
+# --- 2. VSTUPNÁ OBRAZOVKA (Prihlásenie / Registrácia) ---
 if st.session_state['user'] is None:
     st.title("💰 Provízny systém TEPUJEM")
-    tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia"])
+    tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia nového partnera"])
 
     with tab1:
-        m = st.text_input("Mobil", key="L_MOB").strip()
+        m = st.text_input("Mobil (prihlasovacie meno)", key="L_MOB").strip()
         h = st.text_input("Heslo", type="password", key="L_HES").strip()
         if st.button("Prihlásiť sa", use_container_width=True):
-            with st.spinner("Pripájanie (1x)..."):
+            with st.spinner("Overujem údaje..."):
                 res = call_script("login", {"mobil": m, "heslo": h})
                 if res and res.get("status") == "success":
                     st.session_state['user'] = res
+                    st.success("Prihlásenie úspešné!")
+                    time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("Nepodarilo sa prihlásiť. Skúste znova.")
+                    st.error("Nesprávne údaje alebo chyba servera.")
 
     with tab2:
-        st.subheader("Nový partner")
-        reg_pob = st.selectbox("Pobočka", ["Bratislava", "Liptov", "Iné"])
-        reg_men = st.text_input("Meno")
-        reg_mob = st.text_input("Mobil (Login)")
-        reg_hes = st.text_input("Heslo", type="password")
-        reg_kod = st.text_input("Unikátny kód (napr. FERKO5)")
-        if st.button("Zaregistrovať"):
-            if call_script("register", {"meno": reg_men, "mobil": reg_mob, "heslo": reg_hes, "kod": reg_kod, "pobocka": reg_pob}):
-                st.success("Hotovo! Prihláste sa.")
+        st.subheader("Registrácia")
+        
+        # Dynamické načítanie regiónov od Adminov z tabuľky
+        with st.spinner("Načítavam dostupné pobočky..."):
+            regions_res = call_script("getRegions", {})
+            available_regions = regions_res.get("regions", ["Liptov", "Bratislava"]) if regions_res else ["Liptov", "Bratislava"]
+
+        reg_pobocka = st.selectbox("Vyberte vašu pobočku (región)", available_regions)
+        reg_meno = st.text_input("Meno a priezvisko")
+        reg_mobil = st.text_input("Mobil (slúži ako login)")
+        reg_heslo = st.text_input("Heslo (min. 6 znakov)", type="password")
+        reg_kod = st.text_input("Váš unikátny kód (napr. PETO10)")
+
+        if st.button("Zaregistrovať sa", use_container_width=True):
+            if len(reg_heslo) < 6:
+                st.warning("Heslo musí mať aspoň 6 znakov.")
+            else:
+                with st.spinner("Registrujem..."):
+                    res = call_script("register", {
+                        "meno": reg_meno, "mobil": reg_mobil, 
+                        "heslo": reg_heslo, "kod": reg_kod, "pobocka": reg_pobocka
+                    })
+                    if res and res.get("status") == "success":
+                        st.success("Registrácia úspešná! Teraz sa môžete prihlásiť.")
+                    else:
+                        st.error("Chyba. Skontrolujte údaje (mobil/kód už môže existovať).")
 
 # --- 3. DASHBOARD ---
 else:
     u = st.session_state['user']
     st.sidebar.title(f"👤 {u.get('meno')}")
-    if st.sidebar.button("Odhlásiť sa"):
+    st.sidebar.info(f"Pobočka: {u.get('pobocka_id')}")
+    
+    if st.sidebar.button("Odhlásiť sa", use_container_width=True):
         st.session_state['user'] = None
         st.rerun()
 
-    # Použitie novej stabilnej funkcie na načítanie dát
     df = get_data_stable()
     
     if df.empty:
-        st.warning("Dáta sa nepodarilo načítať. Skúste obnoviť stránku (F5).")
+        st.warning("Dáta sa nepodarilo načítať. Skúste F5.")
         st.stop()
 
-    # Spracovanie stĺpcov a statusov
+    # Formátovanie dát
     df['suma_zakazky'] = pd.to_numeric(df['suma_zakazky'], errors='coerce').fillna(0.0)
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0.0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.upper() == 'TRUE'
     df['Stav'] = df['vyplatene_bool'].apply(lambda x: "Vyplatené ✅" if x else "Čaká ⏳")
 
+    # --- ADMIN / SUPERADMIN ---
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka_id')}")
+        
+        # Filter: Admin vidí len partnerov registrovaných pod jeho pobočkou
         active_df = df if u['rola'] == 'superadmin' else df[df['pobocka_id'] == u['pobocka_id']]
 
-        # SEKČIA NACENENIE (Tu to padalo)
-        st.subheader("📩 Nové zákazky na nacenenie")
+        # 1. Nacenenie
+        st.subheader("📩 Zákazky na nacenenie")
         k_naceneniu = active_df[active_df['suma_zakazky'] <= 0]
         if not k_naceneniu.empty:
             for i, row in k_naceneniu.iterrows():
-                with st.expander(f"📍 {row['pobocka_id']} | {row['poznamka']}"):
+                with st.expander(f"📌 {row['pobocka_id']} | {row['poznamka']}"):
                     nova_suma = st.number_input(f"Suma (€)", key=f"s_{i}", min_value=0.0)
-                    if st.button("Uložiť a vypočítať", key=f"b_{i}"):
-                        with st.spinner("Ukladám..."):
-                            if call_script("updateSuma", {"row_index": row['row_index'], "suma": nova_suma}):
-                                st.success("Uložené!")
-                                time.sleep(1.2) # Nutná pauza pre stabilitu Google Scriptu
-                                st.rerun()
-                            else:
-                                st.error("Chyba pri ukladaní.")
-        else: st.info("Všetko nacenené.")
+                    if st.button("Uložiť", key=f"b_{i}"):
+                        if call_script("updateSuma", {"row_index": row['row_index'], "suma": nova_suma}):
+                            st.success("Uložené.")
+                            time.sleep(1.2)
+                            st.rerun()
+        else: st.info("Žiadne nové dopyty.")
 
         st.divider()
 
-        # SEKČIA VÝPLATY
+        # 2. Výplaty
         st.subheader("💳 Prehľad k výplate")
         k_vyplate = active_df[(active_df['suma_zakazky'] > 0) & (~active_df['vyplatene_bool'])]
         if not k_vyplate.empty:
             for p_kod in k_vyplate['kod_pouzity'].unique():
                 p_data = k_vyplate[k_vyplate['kod_pouzity'] == p_kod]
                 with st.expander(f"👤 {p_data['partner_meno'].iloc[0]} ({p_kod}) | Spolu: **{p_data['provizia_odporucatel'].sum():.2f} €**"):
-                    st.table(p_data[['poznamka', 'provizia_odporucatel', 'Stav']])
+                    st.table(p_data[['poznamka', 'provizia_odporucatel', 'Stav']].rename(columns={'poznamka': 'Zákazník'}))
                     if st.button(f"Označiť za vyplatené {p_kod}", key=f"pay_{p_kod}"):
                         for idx in p_data['row_index']: call_script("markAsPaid", {"row_index": idx})
-                        time.sleep(1)
                         st.rerun()
-        else: st.success("Všetko vyplatené.")
+        else: st.success("Všetko je vyplatené.")
 
+    # --- PARTNER ---
     else:
-        # PARTNER PREHĽAD
         st.title(f"💰 Váš prehľad ({u.get('kod')})")
         my_df = df[df['kod_pouzity'] == u['kod']].copy()
         c1, c2 = st.columns(2)
