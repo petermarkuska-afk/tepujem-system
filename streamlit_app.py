@@ -11,9 +11,9 @@ st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide"
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
-# --- FUNKCIE S CACHE (Aby sa nevolali stále dokola) ---
+# --- FUNKCIE S CACHE ---
 
-@st.cache_data(ttl=600) # Načíta pobočky a zapamätá si ich na 10 minút
+@st.cache_data(ttl=600)
 def get_regions_cached():
     for i in range(3):
         try:
@@ -22,20 +22,25 @@ def get_regions_cached():
             if res and "regions" in res:
                 return res["regions"]
         except:
-            time.sleep(1)
+            time.sleep(1.5)
     return ["Liptov", "Bratislava", "Malacky", "Levice", "Banovce", "Zilina", "Orava", "Vranov"]
 
 def call_script(action, params):
-    """ Stabilné volanie pre zápis (Login, Register, Update) """
-    for i in range(3):
+    """ Posilnené volanie pre dôležité zápisy (Registrácia, Login) """
+    # Skúsime to až 4-krát s narastajúcim oneskorením
+    for i in range(4):
         try:
             url = f"{SCRIPT_URL}?action={action}"
             for k, v in params.items(): url += f"&{k}={v}"
-            res = requests.get(url, timeout=25).json()
+            # Zvýšený timeout na 30 sekúnd pre istotu pri zápise
+            response = requests.get(url, timeout=30)
+            res = response.json()
             return res if action in ["login", "register"] else (res.get("status") == "success")
-        except:
-            time.sleep(1.8)
-    return None
+        except Exception as e:
+            if i < 3:
+                time.sleep(2 * (i + 1)) # Čakaj 2s, potom 4s, potom 6s
+                continue
+    return {"status": "timeout", "message": "Server neodpovedá. Skontrolujte pripojenie alebo tabuľku."}
 
 def get_data_stable():
     """ Robustné načítanie dát tabuľky """
@@ -53,40 +58,50 @@ if st.session_state['user'] is None:
     tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia nového partnera"])
 
     with tab1:
-        m = st.text_input("Mobil (prihlasovacie meno)", key="L_MOB").strip()
+        m = st.text_input("Mobil (login)", key="L_MOB").strip()
         h = st.text_input("Heslo", type="password", key="L_HES").strip()
         if st.button("Prihlásiť sa", key="btn_login", use_container_width=True):
-            with st.spinner("Overujem..."):
+            with st.spinner("Pripájanie k databáze..."):
                 res = call_script("login", {"mobil": m, "heslo": h})
                 if res and res.get("status") == "success":
                     st.session_state['user'] = res
                     st.rerun()
+                elif res and res.get("status") == "error":
+                    st.error(f"Chyba: {res.get('message', 'Nesprávne údaje.')}")
                 else:
-                    st.error("Nesprávne údaje.")
+                    st.warning("Pripojenie trvá dlhšie, skúste to znova o pár sekúnd.")
 
     with tab2:
         st.subheader("Registrácia")
-        
-        # Bleskové načítanie z cache (žiadnych 5 sekúnd pri každom kliku)
         available_regions = get_regions_cached()
 
-        reg_pobocka = st.selectbox("Vyberte vašu pobočku", available_regions, key="reg_pob")
+        reg_pobocka = st.selectbox("Pobočka (Región)", available_regions, key="reg_pob")
         reg_meno = st.text_input("Meno a priezvisko", key="reg_men")
         reg_mobil = st.text_input("Mobil (Login)", key="reg_mob")
         reg_heslo = st.text_input("Heslo (min. 6 znakov)", type="password", key="reg_hes")
-        reg_kod = st.text_input("Váš unikátny kód", key="reg_kod")
+        reg_kod = st.text_input("Váš unikátny kód (napr. PETO10)", key="reg_kod")
 
         if st.button("Zaregistrovať sa", key="btn_reg", use_container_width=True):
-            if len(reg_heslo) < 6:
-                st.warning("Heslo je krátke.")
+            if not all([reg_meno, reg_mobil, reg_heslo, reg_kod]):
+                st.warning("Prosím, vyplňte všetky polia.")
+            elif len(reg_heslo) < 6:
+                st.warning("Heslo musí mať aspoň 6 znakov.")
             else:
-                with st.spinner("Registrujem..."):
+                placeholder = st.empty()
+                with placeholder.container():
+                    st.info("Odosielam registráciu do Google Tabuľky... Čakajte prosím.")
                     res = call_script("register", {
                         "meno": reg_meno, "mobil": reg_mobil, 
                         "heslo": reg_heslo, "kod": reg_kod, "pobocka": reg_pobocka
                     })
-                    if res and res.get("status") == "success":
-                        st.success("Hotovo! Teraz sa môžete prihlásiť.")
+                
+                if res and res.get("status") == "success":
+                    st.success("✅ Registrácia úspešná! Teraz sa môžete vľavo prepnúť na Prihlásenie.")
+                    st.balloons()
+                elif res and res.get("status") == "error":
+                    st.error(f"❌ Chyba: {res.get('message', 'Mobil alebo Kód už existuje.')}")
+                else:
+                    st.error("⚠️ Systém nestihol potvrdiť zápis. Skontrolujte tabuľku, či sa dáta zapísali, alebo skúste znova.")
 
 # --- 3. DASHBOARD ---
 else:
@@ -100,6 +115,7 @@ else:
 
     df = get_data_stable()
     if df.empty:
+        st.warning("Dáta sú momentálne nedostupné. Skúste F5.")
         st.stop()
 
     df['suma_zakazky'] = pd.to_numeric(df['suma_zakazky'], errors='coerce').fillna(0.0)
@@ -112,6 +128,7 @@ else:
         
         st.subheader("📩 Zákazky na nacenenie")
         k_naceneniu = active_df[active_df['suma_zakazky'] <= 0]
+        if k_naceneniu.empty: st.write("Všetko je nacenené.")
         for i, row in k_naceneniu.iterrows():
             with st.expander(f"📌 {row['poznamka']}"):
                 nova_suma = st.number_input(f"Suma (€)", key=f"s_{i}")
