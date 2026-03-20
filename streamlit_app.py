@@ -84,7 +84,6 @@ if st.session_state['user'] is None:
                         "kod": kod
                     })
                     if res.get("status") == "success":
-                        # OPRAVENÉ: Ak sa niekto nový zaregistruje, vymažeme cache používateľov, aby sa hneď objavil
                         get_users.clear() 
                         st.success("Hotovo. Teraz sa môžete prihlásiť.")
 
@@ -113,7 +112,6 @@ else:
 
     # --- JOIN USERS ---
     if not users.empty:
-        # OPRAVENÉ: Namiesto `inplace=True` vytvoríme novú premennú, aby sme nemenili údaje v cache pamäti
         users_renamed = users.rename(columns={
             'referral_code': 'kod_pouzity',
             'priezvisko': 'meno_user',
@@ -146,7 +144,6 @@ else:
                     mobil = row.get('mobil_user', '')
 
                     with st.expander(f"{meno} ({mobil}) - {row['poznamka']}"):
-                        # Pridal som step=1.0, aby sa dalo pekne klikať po eurách a predišli sme chybe s desatinnými číslami
                         suma = st.number_input("Suma €", key=f"s_{i}", min_value=0.0, step=1.0)
 
                         if st.button("Uložiť", key=f"b_{i}"):
@@ -154,7 +151,6 @@ else:
                                 "row_index": row['row_index'],
                                 "suma": suma
                             })
-                            # OPRAVENÉ: Vymazanie cache dát o zákazkách, aby sa stránka obnovila s novými údajmi
                             get_data.clear()
                             st.rerun()
 
@@ -177,7 +173,6 @@ else:
                         if st.button("Vyplatiť", key=f"pay_{kod}"):
                             for _, r in p_data.iterrows():
                                 call_script("markAsPaid", {"row_index": r['row_index']})
-                            # OPRAVENÉ: Vymazanie cache dát o zákazkách
                             get_data.clear()
                             st.rerun()
 
@@ -193,4 +188,17 @@ else:
         if my_df.empty:
             st.write("Žiadne dáta")
         else:
-            st.table(my_df[['poznamka', 'provizia_odporucatel']])
+            # Vytvoríme si kópiu dát na zobrazenie pre partnera
+            display_df = my_df.copy()
+            
+            # Formátujeme zárobok na 2 desatinné miesta so znakom €
+            display_df['Zárobok'] = display_df['provizia_odporucatel'].apply(lambda x: f"{x:.2f} €")
+            
+            # Vytvoríme stĺpec Vyplatené (áno / čaká sa) podľa hodnoty z vyplatene_bool
+            display_df['Vyplatené'] = display_df['vyplatene_bool'].apply(lambda x: "áno" if x else "čaká sa")
+            
+            # Premenujeme stĺpec poznamka
+            display_df.rename(columns={'poznamka': 'Poznámka'}, inplace=True)
+            
+            # Zobrazíme iba vybrané stĺpce v správnom poradí
+            st.table(display_df[['Poznámka', 'Zárobok', 'Vyplatené']])
