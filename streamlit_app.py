@@ -4,7 +4,7 @@ import requests
 
 # --- 1. KONFIGURÁCIA ---
 # Nezabudni sem vložiť svoju aktuálnu URL z Google Apps Scriptu
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycby_SVOJA_AKTUALNA_URL/exec"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
 
