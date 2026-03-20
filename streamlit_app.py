@@ -1,47 +1,88 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Tepujem - Provízie", layout="wide")
-st.title("💰 Provízny systém TEPUJEM")
+# Nastavenie stránky
+st.set_page_config(page_title="TEPUJEM - Portál", layout="centered")
 
-def load_data():
-    sheet_url = st.secrets["gsheets_url"]
-    csv_url = sheet_url.replace('/edit#gid=', '/export?format=csv&gid=')
+# Funkcia na načítanie dát z Google Sheets (použijeme link zo Secrets)
+def load_data(sheet_type="users"):
+    url = st.secrets["gsheets_url_users"] if sheet_type == "users" else st.secrets["gsheets_url_zakazky"]
+    csv_url = url.replace('/edit#gid=', '/export?format=csv&gid=')
     if '/edit' in csv_url:
         csv_url = csv_url.split('/edit')[0] + '/export?format=csv'
     return pd.read_csv(csv_url)
 
-pobocka_list = ["Nitra", "Trnava", "Bratislava", "Super Admin"]
-auth = st.sidebar.selectbox("Vyberte pobočku:", pobocka_list)
+# --- STAV APLIKÁCIE (Login state) ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+    st.session_state['user_data'] = None
 
-try:
-    df = load_data()
-    
-    # Ak je tabuľka prázdna, vytvoríme aspoň prázdny DataFrame so stĺpcami
-    if df.empty:
-        st.info("Tabuľka je momentálne prázdna. Čakám na nové zákazky z Make.com.")
-    else:
-        if auth == "Super Admin":
-            st.subheader("Kompletný prehľad")
-            st.dataframe(df)
-        else:
-            st.subheader(f"Zákazky: {auth}")
-            filtered_df = df[df['pobocka_id'] == auth].copy()
+# --- HLAVNÁ OBRAZOVKA (LOGIN / REGISTRÁCIA) ---
+if not st.session_state['logged_in']:
+    menu = ["Prihlásenie", "Registrácia nového zákazníka"]
+    choice = st.sidebar.selectbox("Menu", menu)
+
+    if choice == "Prihlásenie":
+        st.subheader("Prihlásenie do profilu")
+        login_id = st.text_input("Mobilné číslo alebo Login")
+        password = st.text_input("Heslo", type='password')
+        
+        if st.button("Prihlásiť sa"):
+            users_df = load_data("users")
+            # Overenie (predpokladáme, že v stĺpci 'mobil' sú prihlasovacie mená)
+            user = users_df[(users_df['mobil'].astype(str) == login_id) & (users_df['heslo'].astype(str) == password)]
             
-            if filtered_df.empty:
-                st.write("Žiadne zákazky na spracovanie.")
+            if not user.empty:
+                st.session_state['logged_in'] = True
+                st.session_state['user_data'] = user.iloc[0].to_dict()
+                st.rerun()
             else:
-                st.write("Doplňte 'suma_zakazky' a systém dopočíta provízie:")
-                # EDITOR: Tu admin mení sumu
-                edited_df = st.data_editor(filtered_df)
-                
-                # VÝPOČET: 5% z každej sumy
-                if st.button("Vypočítať a pripraviť na uloženie"):
-                    edited_df['provizia_zakaznik'] = edited_df['suma_zakazky'] * 0.05
-                    edited_df['provizia_odporucatel'] = edited_df['suma_zakazky'] * 0.05
-                    st.write("Navrhované provízie (5% + 5%):")
-                    st.dataframe(edited_df)
-                    st.success("Provízie boli vypočítané. Pre uloženie do Google Sheets použite 'Copy-Paste' do vašej tabuľky.")
+                st.error("Nesprávne meno alebo heslo.")
 
-except Exception as e:
-    st.error(f"Chyba: {e}")
+    elif choice == "Registrácia nového zákazníka":
+        st.subheader("Vytvorte si vlastný zľavový kód")
+        with st.form("reg_form"):
+            meno = st.text_input("Meno")
+            priezvisko = st.text_input("Priezvisko")
+            adresa = st.text_input("Adresa")
+            mobil = st.text_input("Mobilné číslo")
+            heslo = st.text_input("Zvoľte si heslo", type='password')
+            navrhovany_kod = st.text_input("Váš unikátny zľavový kód (napr. PETO10)")
+            
+            submit = st.form_submit_button("Zaregistrovať sa")
+            
+            if submit:
+                users_df = load_data("users")
+                # Overenie, či kód už existuje
+                if navrhovany_kod in users_df['referral_code'].values:
+                    st.warning("Tento kód už niekto používa. Zvoľte si iný.")
+                else:
+                    st.success(f"Registrácia úspešná! Vaše údaje boli odoslané na spracovanie. Teraz sa môžete prihlásiť.")
+                    # Tu by nasledoval zápis do Google Sheets (vyžaduje Service Account)
+                    st.info("POZNÁMKA: Pre automatický zápis do tabuľky musíme prepojiť Service Account.")
+
+# --- PROFIL PO PRIHLÁSENÍ ---
+else:
+    u = st.session_state['user_data']
+    st.sidebar.button("Odhlásiť sa", on_click=lambda: st.session_state.update(logged_in=False))
+
+    if u['rola'] == 'admin' or u['rola'] == 'pobocka':
+        st.title(f"Admin Panel - Pobočka {u['meno']}")
+        zakazky_df = load_data("zakazky")
+        st.write("Prehľad všetkých zákazníkov a provízií:")
+        st.dataframe(zakazky_df)
+    
+    else:
+        st.title(f"Môj Profil: {u['meno']} {u['priezvisko']}")
+        st.info(f"Váš zľavový kód: **{u['referral_code']}**")
+        
+        # Ukážeme zákazníkovi len jeho provízie
+        zakazky_df = load_data("zakazky")
+        moje_provizie = zakazky_df[zakazky_df['kod_pouzity'] == u['referral_code']]
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Počet odporúčaných zákaziek", len(moje_provizie))
+        col2.metric("Zárobok celkom", f"{moje_provizie['provizia_odporucatel'].sum()} €")
+        
+        st.write("História vašich odporúčaní:")
+        st.table(moje_provizie[['suma_zakazky', 'provizia_odporucatel']])
