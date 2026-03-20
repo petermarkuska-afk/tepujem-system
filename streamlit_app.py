@@ -55,10 +55,14 @@ if st.session_state['user'] is None:
     with tab2:
         st.subheader("Registrácia")
         
-        # Dynamické načítanie regiónov od Adminov z tabuľky
+        # Dynamické načítanie VŠETKÝCH admin regiónov zo stĺpca A
         with st.spinner("Načítavam dostupné pobočky..."):
             regions_res = call_script("getRegions", {})
-            available_regions = regions_res.get("regions", ["Liptov", "Bratislava"]) if regions_res else ["Liptov", "Bratislava"]
+            if regions_res and "regions" in regions_res:
+                available_regions = regions_res["regions"]
+            else:
+                # Záložný zoznam, ak by server neodpovedal
+                available_regions = ["Liptov", "Bratislava", "Malacky", "Levice", "Banovce", "Zilina", "Orava", "Vranov"]
 
         reg_pobocka = st.selectbox("Vyberte vašu pobočku (región)", available_regions)
         reg_meno = st.text_input("Meno a priezvisko")
@@ -78,7 +82,7 @@ if st.session_state['user'] is None:
                     if res and res.get("status") == "success":
                         st.success("Registrácia úspešná! Teraz sa môžete prihlásiť.")
                     else:
-                        st.error("Chyba. Skontrolujte údaje (mobil/kód už môže existovať).")
+                        st.error("Chyba pri registrácii.")
 
 # --- 3. DASHBOARD ---
 else:
@@ -106,7 +110,7 @@ else:
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka_id')}")
         
-        # Filter: Admin vidí len partnerov registrovaných pod jeho pobočkou
+        # Filter: Admin vidí len partnerov priradených k jeho menu/pobočke
         active_df = df if u['rola'] == 'superadmin' else df[df['pobocka_id'] == u['pobocka_id']]
 
         # 1. Nacenenie
