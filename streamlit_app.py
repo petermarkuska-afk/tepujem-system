@@ -47,7 +47,8 @@ def get_users():
 
 # --- LOGIN / REGISTER ---
 if st.session_state['user'] is None:
-    st.title("💰 Provízny systém")
+    # ZMENENÝ NÁZOV PROJEKTU
+    st.title("💰 Zarob si s TEPUJEM.SK")
 
     tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia"])
 
