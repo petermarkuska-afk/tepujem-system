@@ -34,7 +34,11 @@ def call_script(action, params=None):
     
     try:
         response = requests.get(SCRIPT_URL, params=params, timeout=45)
-        return response.json()
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Server vrátil chybu: {response.status_code}")
+            return {}
     except Exception as e:
         st.error(f"Chyba pripojenia k databáze: {e}")
         return {}
@@ -44,14 +48,14 @@ def validate_mobile(mob):
     pattern = r'^09\d{8}$'
     return re.match(pattern, mob) is not None
 
-# --- 3. DÁTOVÉ FUNKCIE (BEZ CACHE PRE ŽIVÉ DÁTA) ---
+# --- 3. DÁTOVÉ FUNKCIE ---
 def get_regions():
     """Načíta zoznam pobočiek."""
     res = call_script("getRegions")
     return res.get("regions", [])
 
 def get_data():
-    """Načíta transakcie/zákazky z Google Sheets (VŽDY NAŽIVO)."""
+    """Načíta transakcie/zákazky z Google Sheets (transactions_data)."""
     try:
         response = requests.get(f"{SCRIPT_URL}?action=getZakazky", timeout=35)
         return pd.DataFrame(response.json())
@@ -59,7 +63,7 @@ def get_data():
         return pd.DataFrame()
 
 def get_users():
-    """Načíta užívateľov z users_data (VŽDY NAŽIVO)."""
+    """Načíta užívateľov z users_data."""
     try:
         response = requests.get(f"{SCRIPT_URL}?action=getUsers", timeout=35)
         return pd.DataFrame(response.json())
@@ -94,6 +98,7 @@ css_style = """
     color: white !important;
 }
 [data-testid="stMainBlockContainer"] *, label, h1, p, div { color: white !important; }
+.stMetric { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; }
 input { background-color: #333333 !important; color: white !important; border: 1px solid #555 !important; }
 button { background-color: #444 !important; color: white !important; border: 1px solid #666 !important; }
 </style>
@@ -157,7 +162,6 @@ else:
         st.session_state['user'] = None
         st.rerun()
 
-    # Sťahovanie čerstvých dát (BEZ CACHE)
     df = get_data()
     users = get_users()
 
@@ -165,20 +169,22 @@ else:
         st.warning("Žiadne dáta v tabuľke zákaziek.")
         st.stop()
 
+    # Predspracovanie číselných dát
     df['suma_zakazky'] = pd.to_numeric(df['suma_zakazky'], errors='coerce').fillna(0)
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
 
-    # Merge údajov získateľa (Meno, Priezvisko, Telefón) z tabuľky users_data
+    # Logika prepojenia: Priraďujeme objednávku adminovi podľa pobočky partnera
     if not users.empty:
         users_clean = users.rename(columns={
             'referral_code': 'kod_pouzity', 
             'mobil': 'mobil_partnera', 
             'meno': 'meno_P',
-            'priezvisko': 'priezvisko_P'
+            'priezvisko': 'priezvisko_P',
+            'pobocka': 'pobocka_registracie'
         })
         df = df.merge(
-            users_clean[['kod_pouzity', 'meno_P', 'priezvisko_P', 'mobil_partnera']], 
+            users_clean[['kod_pouzity', 'meno_P', 'priezvisko_P', 'mobil_partnera', 'pobocka_registracie']], 
             on='kod_pouzity', 
             how='left'
         )
@@ -187,13 +193,20 @@ else:
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka', 'Neznáma')}")
         
-        # Filtrovanie podľa premenovaného stĺpca 'mesto'
+        # Admin vidí tie objednávky, ktorých partner patrí do jeho pobočky
         if u['rola'] == 'superadmin':
             active_df = df
         else:
-            active_df = df[df['mesto'] == u['pobocka']]
+            active_df = df[df['pobocka_registracie'] == u['pobocka']]
 
-        t1, t2 = st.tabs(["Na nacenenie", "Na vyplatenie"])
+        # Metriky pre Admina
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Na nacenenie", len(active_df[active_df['suma_zakazky'] <= 0]))
+        with c2:
+            st.metric("K výplate", f"{active_df[(active_df['suma_zakazky'] > 0) & (~active_df['vyplatene_bool'])]['provizia_odporucatel'].sum():.2f} €")
+
+        t1, t2 = st.tabs(["📋 Na nacenenie", "💳 Na vyplatenie"])
 
         with t1:
             nac = active_df[active_df['suma_zakazky'] <= 0]
@@ -201,40 +214,47 @@ else:
                 st.success("Všetko nacenené! 👍")
             else:
                 for i, row in nac.iterrows():
-                    # Ťaháme lokalitu priamo zo stĺpca 'mesto' (napr. Paraguay)
-                    lokalita = row.get('mesto', 'Neznáme')
-                    # Celé meno získateľa a telefón
-                    partner_info = f"{row.get('meno_P', 'Neznámy')} {row.get('priezvisko_P', '')} ({row.get('mobil_partnera', '---')})"
+                    mesto = row.get('mesto', 'Neznáme')
+                    p_info = f"{row.get('meno_P', 'Neznámy')} {row.get('priezvisko_P', '')} ({row.get('mobil_partnera', '---')})"
                     
-                    with st.expander(f"📍 {lokalita} - {row.get('poznamka')} | Získateľ: {partner_info}"):
-                        suma_val = st.number_input("Suma €", key=f"s_{i}", min_value=0.0, step=1.0)
-                        if st.button("Uložiť", key=f"b_{i}"):
-                            with st.spinner("Zapisujem..."):
-                                # Posielame index a sumu ako string pre stabilitu v Sheets
+                    with st.expander(f"📍 {mesto} - {row.get('poznamka')} | Získateľ: {p_info}"):
+                        suma_val = st.number_input("Zadajte sumu zákazky (€)", key=f"s_{i}", min_value=0.0, step=5.0)
+                        if st.button("Uložiť a naceniť", key=f"b_{i}"):
+                            with st.spinner("Zapisujem do systému..."):
                                 call_script("updateSuma", {"row_index": str(row['row_index']), "suma": str(suma_val)})
                                 time.sleep(1.5)
                                 st.rerun()
 
         with t2:
             pay = active_df[(active_df['suma_zakazky'] > 0) & (~active_df['vyplatene_bool'])]
-            if not pay.empty:
+            if pay.empty:
+                st.info("Žiadne nevyplatené provízie.")
+            else:
                 for kod in pay['kod_pouzity'].dropna().unique():
                     p_data = pay[pay['kod_pouzity'] == kod]
-                    # Celé meno a telefón partnera pre sekciu výplat
-                    partner_full = f"{p_data['meno_P'].iloc[0]} {p_data['priezvisko_P'].iloc[0]} ({p_data['mobil_partnera'].iloc[0]})"
+                    p_full = f"{p_data['meno_P'].iloc[0]} {p_data['priezvisko_P'].iloc[0]} ({p_data['mobil_partnera'].iloc[0]})"
                     
-                    with st.expander(f"👤 {partner_full} | Spolu: {p_data['provizia_odporucatel'].sum():.2f} €"):
-                        st.table(p_data[['poznamka', 'provizia_odporucatel']])
-                        if st.button(f"Označiť ako vyplatené ({kod})", key=f"pay_{kod}"):
-                            for _, r in p_data.iterrows():
-                                call_script("markAsPaid", {"row_index": str(r['row_index'])})
-                            st.rerun()
+                    with st.expander(f"👤 {p_full} | Provízia: {p_data['provizia_odporucatel'].sum():.2f} €"):
+                        st.dataframe(p_data[['poznamka', 'suma_zakazky', 'provizia_odporucatel']], use_container_width=True)
+                        if st.button(f"Potvrdiť vyplatenie pre {kod}", key=f"pay_{kod}"):
+                            with st.spinner("Aktualizujem stav..."):
+                                for _, r in p_data.iterrows():
+                                    call_script("markAsPaid", {"row_index": str(r['row_index'])})
+                                st.rerun()
 
     # --- PARTNER VIEW ---
     else:
-        st.title("💰 Môj prehľad")
+        st.title("💰 Môj prehľad provízií")
         my_df = df[df['kod_pouzity'] == u['kod']]
-        st.metric("Zarobené celkovo", f"{my_df['provizia_odporucatel'].sum():.2f} €")
-        st.metric("Čaká na výplatu", f"{my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum():.2f} €")
+        
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric("Zarobené celkovo", f"{my_df['provizia_odporucatel'].sum():.2f} €")
+        with m2:
+            st.metric("Čaká na výplatu", f"{my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum():.2f} €")
+        
+        st.subheader("História odporúčaní")
         if not my_df.empty:
             st.table(my_df[['poznamka', 'provizia_odporucatel', 'vyplatene']])
+        else:
+            st.info("Zatiaľ ste nepriniesli žiadne zákazky. Zdieľajte svoj kód!")
