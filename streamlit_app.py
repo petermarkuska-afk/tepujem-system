@@ -5,7 +5,6 @@ import base64
 import os
 
 # --- KONFIGURÁCIA ---
-# layout="centered" zabezpečí, že sa nič nerozťahuje na celú šírku
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="centered")
 
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
@@ -19,10 +18,9 @@ def get_base64_of_bin_file(bin_file):
     except FileNotFoundError:
         return None
 
-# --- CSS PRE VZHĽAD (Centrovanie a pozadie) ---
+# --- CSS PRE VZHĽAD (Kontrast a Centrovanie) ---
 img_base64 = get_base64_of_bin_file("image5.png")
 
-# CSS šablóna
 css = """
 <style>
 /* Pozadie celej stránky */
@@ -33,36 +31,38 @@ css = """
     background-attachment: fixed;
 }
 
-/* Prekrytie pre zjemnenie obrázka (biely filter 70%) */
+/* Tmavý filter na pozadie, aby obrázok nebol rušivý */
 [data-testid="stAppViewContainer"]::before {
     content: "";
     position: absolute;
     top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(255, 255, 255, 0.7); 
+    background: rgba(0, 0, 0, 0.5); 
     pointer-events: none;
 }
 
-/* Hlavný kontajner obsahu - fixná šírka */
+/* Biela nepriehľadná karta pre obsah */
 [data-testid="stMainBlockContainer"] {
     max-width: 600px !important; 
-    background-color: rgba(255, 255, 255, 0.95); 
+    background-color: white !important; 
     padding: 30px !important;
     border-radius: 20px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    margin-top: 30px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    margin-top: 50px;
+    color: #333333 !important;
+}
+
+/* Vynútenie čierneho textu vnútri karty */
+[data-testid="stMainBlockContainer"] * {
+    color: #333333 !important;
 }
 </style>
 """
 
-# Ak máme obrázok, vložíme ho do CSS
 if img_base64:
     css = css.replace("REPLACE_ME", img_base64)
     st.markdown(css, unsafe_allow_html=True)
 
-# --- API ---
-if 'user' not in st.session_state:
-    st.session_state['user'] = None
-
+# --- API FUNKCIE ---
 def call_script(action, params=None):
     if params is None: params = {}
     params['action'] = action
@@ -89,6 +89,10 @@ def get_users():
         return pd.DataFrame(requests.get(f"{SCRIPT_URL}?action=getUsers").json())
     except:
         return pd.DataFrame()
+
+# --- APP LOGIKA ---
+if 'user' not in st.session_state:
+    st.session_state['user'] = None
 
 # --- LOGIN / DASHBOARD ---
 if st.session_state['user'] is None:
@@ -124,7 +128,6 @@ if st.session_state['user'] is None:
 else:
     u = st.session_state['user']
     
-    # Bočný panel - ak je otvorený, zobrazí sa aj tak, ale obsah je centrovaný
     st.sidebar.title(f"👤 {u.get('meno')}")
     if st.sidebar.button("Odhlásiť"):
         st.session_state['user'] = None
@@ -137,12 +140,10 @@ else:
         st.warning("Žiadne dáta v tabuľke zákaziek.")
         st.stop()
 
-    # --- CLEAN ---
     df['suma_zakazky'] = pd.to_numeric(df['suma_zakazky'], errors='coerce').fillna(0)
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
 
-    # --- JOIN USERS ---
     if not users.empty:
         users_renamed = users.rename(columns={'referral_code': 'kod_pouzity', 'priezvisko': 'meno_user', 'mobil': 'mobil_user', 'meno': 'pobocka_odporucatela'})
         df = df.merge(users_renamed[['kod_pouzity', 'meno_user', 'mobil_user', 'pobocka_odporucatela']], on='kod_pouzity', how='left')
@@ -152,7 +153,7 @@ else:
         df['mobil_user'] = None
     df['pridelena_pobocka'] = df['pobocka_odporucatela'].fillna(df['pobocka_id'])
 
-    # --- ADMIN / PARTNER ---
+    # ADMIN / PARTNER
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka_id')}")
         active_df = df if u['rola'] == 'superadmin' else df[df['pridelena_pobocka'] == u['pobocka_id']]
