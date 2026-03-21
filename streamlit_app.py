@@ -5,14 +5,19 @@ import base64
 import re
 import time
 
-# --- KONFIGURÁCIA ---
-st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="centered")
+# --- 1. KONFIGURÁCIA ---
+st.set_page_config(
+    page_title="TEPUJEM Portál", 
+    page_icon="💰", 
+    layout="centered"
+)
 
-# URL na Google Apps Script (tvoja aktuálna URL)
+# URL na tvoj Google Apps Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
 
-# --- POMOCNÉ FUNKCIE ---
+# --- 2. POMOCNÉ FUNKCIE ---
 def get_base64_of_bin_file(bin_file):
+    """Pomocná funkcia pre načítanie pozadia."""
     try:
         with open(bin_file, 'rb') as f:
             data = f.read()
@@ -21,22 +26,24 @@ def get_base64_of_bin_file(bin_file):
         return None
 
 def call_script(action, params=None):
+    """Volanie Google Apps Scriptu s ošetrením chýb."""
     if params is None:
         params = {}
     params['action'] = action
+    
     try:
         response = requests.get(SCRIPT_URL, params=params, timeout=40)
         return response.json()
     except Exception as e:
-        st.error(f"Chyba pripojenia k API: {e}")
+        st.error(f"Chyba pripojenia k databáze: {e}")
         return {}
 
 def validate_mobile(mob):
-    # Formát 09XXXXXXXX (začína 09, spolu 10 číslic)
+    """Validácia mobilného čísla (formát 09XXXXXXXX)."""
     pattern = r'^09\d{8}$'
     return re.match(pattern, mob) is not None
 
-# --- CACHE FUNKCIE ---
+# --- 3. DÁTOVÉ FUNKCIE ---
 @st.cache_data(ttl=300)
 def get_regions():
     res = call_script("getRegions")
@@ -44,21 +51,23 @@ def get_regions():
 
 @st.cache_data(ttl=300)
 def get_data():
+    """Načíta transakcie/zákazky z Google Sheets."""
     try:
         data = requests.get(f"{SCRIPT_URL}?action=getZakazky").json()
         return pd.DataFrame(data)
-    except:
+    except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def get_users():
+    """Načíta užívateľov z users_data."""
     try:
         data = requests.get(f"{SCRIPT_URL}?action=getUsers").json()
         return pd.DataFrame(data)
-    except:
+    except Exception:
         return pd.DataFrame()
 
-# --- CSS ŠTÝLY ---
+# --- 4. CSS ŠTÝLY ---
 img_base64 = get_base64_of_bin_file("image5.png")
 
 css_style = """
@@ -70,7 +79,7 @@ css_style = """
     background-position: center;
     background-attachment: fixed;
 }
-/* Tmavá clona pre čitateľnosť */
+/* Tmavá clona pre lepšiu čitateľnosť textu */
 [data-testid="stAppViewContainer"]::before {
     content: "";
     position: absolute;
@@ -78,7 +87,7 @@ css_style = """
     background: rgba(0, 0, 0, 0.75); 
     pointer-events: none;
 }
-/* Hlavná karta obsahu */
+/* Karta obsahu */
 [data-testid="stMainBlockContainer"] {
     max-width: 800px !important; 
     background-color: #1e1e1e !important; 
@@ -88,7 +97,7 @@ css_style = """
     margin-top: 50px;
     color: white !important;
 }
-/* Vynútenie bielej farby textu v karte */
+/* Farby textov vnútri karty */
 [data-testid="stMainBlockContainer"] *, label, h1, p, div { color: white !important; }
 
 /* Štýl pre vstupné polia */
@@ -98,10 +107,11 @@ input { background-color: #333333 !important; color: white !important; border: 1
 button { background-color: #444 !important; color: white !important; border: 1px solid #666 !important; }
 </style>
 """
+
 if img_base64:
     st.markdown(css_style.replace("REPLACE_ME", img_base64), unsafe_allow_html=True)
 
-# --- HLAVNÝ PROGRAM ---
+# --- 5. HLAVNÁ APLIKÁCIA ---
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
@@ -115,9 +125,9 @@ if st.session_state['user'] is None:
         with st.form("login_form"):
             m = st.text_input("Mobilné číslo (formát 09XXXXXXXX)")
             h = st.text_input("Heslo", type="password")
-            if st.form_submit_button("Prihlásiť sa"):
+            if st.form_submit_button("Prihlásiť"):
                 if not validate_mobile(m):
-                    st.error("Mobilné číslo musí byť v tvare 09XXXXXXXX!")
+                    st.error("Mobil musí byť v tvare 09XXXXXXXX!")
                 else:
                     res = call_script("login", {"mobil": m, "heslo": h})
                     if res.get("status") == "success":
@@ -128,13 +138,14 @@ if st.session_state['user'] is None:
 
     with tab2:
         with st.form("register_form"):
-            pob = st.selectbox("Vyber si svoj región (Pobočka)", get_regions())
+            # Použijeme názov stĺpca A: 'pobocka'
+            pob = st.selectbox("Vyber najbližšiu pobočku", get_regions())
             meno = st.text_input("Meno")
             priezvisko = st.text_input("Priezvisko")
             adresa = st.text_input("Adresa")
-            mob = st.text_input("Mobilné číslo (09XXXXXXXX)")
+            mob = st.text_input("Mobilné číslo (formát 09XXXXXXXX)")
             hes = st.text_input("Heslo", type="password")
-            kod = st.text_input("Kód (vlastný unikátny kód)")
+            kod = st.text_input("Vlastný kód")
             
             if st.form_submit_button("Registrovať"):
                 if not validate_mobile(mob):
@@ -142,7 +153,6 @@ if st.session_state['user'] is None:
                 elif not all([meno, priezvisko, adresa, mob, hes, kod]):
                     st.warning("Vyplň všetky polia!")
                 else:
-                    # Volanie skriptu
                     res = call_script("register", {
                         "pobocka": pob, 
                         "meno": meno, 
@@ -162,12 +172,13 @@ if st.session_state['user'] is None:
 else:
     u = st.session_state['user']
     
-    st.sidebar.title(f"👤 {u.get('meno')}")
+    # Bočný panel s odhlásením
+    st.sidebar.title(f"👤 {u.get('meno', 'Užívateľ')}")
     if st.sidebar.button("Odhlásiť"):
         st.session_state['user'] = None
         st.rerun()
 
-    # Načítanie a spracovanie dát
+    # Načítanie dát
     df = get_data()
     users = get_users()
 
@@ -175,59 +186,49 @@ else:
         st.warning("Žiadne dáta v tabuľke zákaziek.")
         st.stop()
 
-    # Čistenie dát
+    # --- ČISTENIE A ÚPRAVA DÁT ---
     df['suma_zakazky'] = pd.to_numeric(df['suma_zakazky'], errors='coerce').fillna(0)
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
 
-    # BEZPEČNÝ JOIN - PREPOJENIE TABULIEK
-    # Skontrolujeme existenciu užívateľov
+    # --- JOIN TABULIEK ---
+    # Merge podľa referral_code (v transakciách) a referral_code (v users)
     if not users.empty:
-        # Pomenujeme stĺpce z tabuľky users podľa toho, čo reálne máme v Sheets
-        # Predpokladám: meno, priezvisko, adresa, mobil, referral_code, pobocka
+        # Pomenujeme stĺpce tak, aby sedeli s hlavičkami v Sheets
         users_clean = users.rename(columns={
             'referral_code': 'kod_pouzity',
-            'pobocka': 'pobocka_partnera',
-            'mobil': 'mobil_partnera'
+            'mobil': 'mobil_partnera',
+            'pobocka': 'pobocka_partnera'
         })
         
-        # Merge - spájame podľa kódu
+        # Spojenie dát
         df = df.merge(
             users_clean[['kod_pouzity', 'meno', 'priezvisko', 'adresa', 'mobil_partnera', 'pobocka_partnera']], 
             on='kod_pouzity', 
             how='left'
         )
     else:
-        # Vytvoríme prázdne stĺpce, aby kód nespadol
-        df['meno'] = ""
-        df['priezvisko'] = ""
-        df['adresa'] = ""
-        df['mobil_partnera'] = ""
-        df['pobocka_partnera'] = ""
-
-    # Uistíme sa, že stĺpce existujú, ak bol merge prázdny
-    for col in ['meno', 'priezvisko', 'adresa', 'mobil_partnera', 'pobocka_partnera']:
-        if col not in df.columns: df[col] = ""
+        # Vytvorenie prázdnych stĺpcov, ak users tabuľka nefunguje
+        for col in ['meno', 'priezvisko', 'adresa', 'mobil_partnera', 'pobocka_partnera']:
+            df[col] = "---"
 
     # --- ADMIN VIEW ---
     if u['rola'] in ['admin', 'superadmin']:
-        st.title(f"📊 Správa - {u.get('pobocka')}")
+        st.title(f"📊 Správa - {u.get('pobocka', 'Neznáma')}")
         
-        # Logika viditeľnosti
+        # Logika: Admin vidí svoje mesto alebo partnerov zo svojho mesta
         if u['rola'] == 'superadmin':
             active_df = df
         else:
-            # Admin vidí objednávky v jeho regióne ALEBO od svojich partnerov
-            # Predpokladám, že 'pobocka_id' je názov mesta
             active_df = df[(df['pobocka_id'] == u['pobocka']) | (df['pobocka_partnera'] == u['pobocka'])]
 
         t1, t2 = st.tabs(["Na nacenenie", "Na vyplatenie"])
 
-        # TAB 1: NACENENIE
+        # TAB 1: Nacenenie
         with t1:
             nac = active_df[active_df['suma_zakazky'] <= 0]
             if nac.empty:
-                st.success("Máte všetko nacenené! 👍")
+                st.success("Všetko nacenené! 👍")
             else:
                 for i, row in nac.iterrows():
                     m = row.get('meno', 'Priama')
@@ -245,13 +246,12 @@ else:
                             call_script("updateSuma", {"row_index": row['row_index'], "suma": suma})
                             st.rerun()
 
-        # TAB 2: VYPLATENIE
+        # TAB 2: Vyplatenie
         with t2:
             pay = active_df[(active_df['suma_zakazky'] > 0) & (~active_df['vyplatene_bool'])]
             if pay.empty:
                 st.info("Nič na vyplatenie.")
             else:
-                # Zoskupíme podľa kódu partnera
                 for kod in pay['kod_pouzity'].dropna().unique():
                     p_data = pay[pay['kod_pouzity'] == kod]
                     m = p_data['meno'].iloc[0]
@@ -261,7 +261,6 @@ else:
                     
                     with st.expander(f"Partner: {m} {p} (Tel: {tel}) | Spolu na výplatu: {p_data['provizia_odporucatel'].sum():.2f} €"):
                         st.write(f"Adresa: {adr}")
-                        
                         disp = p_data[['poznamka', 'provizia_odporucatel', 'pobocka_id']].copy()
                         disp.columns = ['Poznámka', 'Provízia', 'Mesto']
                         st.table(disp)
