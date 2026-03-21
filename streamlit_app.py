@@ -6,50 +6,62 @@ import re
 import time
 from datetime import datetime
 
-# --- 1. GLOBÁLNA KONFIGURÁCIA ---
+# =================================================================
+# 1. GLOBÁLNA KONFIGURÁCIA A NASTAVENIA STRÁNKY
+# =================================================================
 st.set_page_config(
-    page_title="TEPUJEM.SK | Partner Portal", 
+    page_title="TEPUJEM.SK | Enterprise Provízny Systém", 
     page_icon="💰", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. BEZPEČNOSŤ (SECRETS) ---
+# --- ZABEZPEČENIE (SECRETS) ---
 try:
+    # URL tvojho nasadeného Google Apps Scriptu
     SCRIPT_URL = st.secrets["SCRIPT_URL"]
+    # Token, ktorý sa musí zhodovať s REQUIRED_TOKEN v .gs skripte
     API_TOKEN = st.secrets["API_TOKEN"]
 except Exception:
-    st.error("🚨 CHYBA KONFIGURÁCIE: V Streamlit Cloud chýbajú 'Secrets' (SCRIPT_URL alebo API_TOKEN).")
+    st.error("🚨 KRITICKÁ CHYBA: Chýba konfigurácia v Streamlit Secrets (SCRIPT_URL alebo API_TOKEN).")
     st.stop()
 
-# --- 3. POMOCNÉ FUNKCIE (UI & LOGIKA) ---
+# =================================================================
+# 2. POMOCNÉ FUNKCIE (UI, VALIDÁCIA, FORMÁTOVANIE)
+# =================================================================
 def get_base64_of_bin_file(bin_file):
-    """Konverzia obrázka na pozadie."""
+    """Skonvertuje lokálny obrázok do Base64 pre použitie v CSS pozadí."""
     try:
         with open(bin_file, 'rb') as f:
             data = f.read()
         return base64.b64encode(data).decode()
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except Exception as e:
         return None
 
 def validate_mobile(mob):
-    """Validácia slovenského čísla."""
+    """Overí, či telefónne číslo spĺňa slovenský formát 09XXXXXXXX."""
     return re.match(r'^09\d{8}$', str(mob)) is not None
 
 def format_currency(val):
-    """Formátovanie na Euro."""
+    """Formátuje číselnú hodnotu na menu Euro s dvomi desatinnými miestami."""
     try:
         return f"{float(val):.2f} €"
     except (ValueError, TypeError):
         return "0.00 €"
 
-# --- 4. KOMUNIKÁCIA S GOOGLE SCRIPT API ---
+# =================================================================
+# 3. KOMUNIKÁCIA S BACKENDOM (GOOGLE APPS SCRIPT API)
+# =================================================================
 def call_script(action, params=None):
+    """Univerzálna funkcia na vykonávanie GET požiadaviek na Google Script API."""
     if params is None:
         params = {}
     params['action'] = action
     params['token'] = API_TOKEN
     try:
+        # Timeout nastavený na 45s kvôli pomalším reakciám Google tabuliek
         response = requests.get(SCRIPT_URL, params=params, timeout=45)
         if response.status_code == 200:
             return response.json()
@@ -57,34 +69,37 @@ def call_script(action, params=None):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# --- 5. DATA ENGINE (MERGE & FIXY) ---
+# =================================================================
+# 4. DATA ENGINE (SYNCHRONIZÁCIA A SPÁJANIE TABULIEK)
+# =================================================================
 def get_full_data():
-    """Získanie dát z Google Sheets a ich prepojenie."""
+    """Načíta transakcie a partnerov a vykoná precízny Data Merge."""
     try:
-        # Načítanie transakcií
+        # 1. Načítanie všetkých zákaziek (Sheet: transactions_data)
         z_res = requests.get(f"{SCRIPT_URL}?action=getZakazky&token={API_TOKEN}").json()
         df_z = pd.DataFrame(z_res)
         
-        # Načítanie partnerov (Užívateľov)
+        # 2. Načítanie všetkých registrovaných užívateľov (Sheet: users_data)
         u_res = requests.get(f"{SCRIPT_URL}?action=getUsers&token={API_TOKEN}").json()
         df_u = pd.DataFrame(u_res)
         
         if df_z.empty:
             return pd.DataFrame(), df_u
             
-        # Ošetrenie čísel a textov
+        # Čistenie a pretypovanie dát pre výpočty
         df_z['suma_zakazky'] = pd.to_numeric(df_z['suma_zakazky'], errors='coerce').fillna(0)
         df_z['provizia_odporucatel'] = pd.to_numeric(df_z['provizia_odporucatel'], errors='coerce').fillna(0)
         
-        # FIX: 'Series' object has no attribute 'upper' (opravené cez .str)
+        # FIX: Použitie .str.upper() na Series, aby sme predišli AttributeError
         df_z['vyplatene_bool'] = df_z['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
         
-        # Generovanie indexu pre Google Sheets (riadok 2 je začiatok dát)
+        # Interný index pre presné smerovanie zápisu do Google Sheets (Row 1 sú hlavičky)
         if 'row_index' not in df_z.columns:
             df_z['row_index'] = range(2, len(df_z) + 2)
 
-        # Merge dát - párovanie transakcie na partnera cez kód (stĺpec G v Sheets)
+        # Merge dát: Priradíme informácie o partnerovi ku každej transakcii cez 'kod_pouzity'
         if not df_u.empty:
+            # G stĺpec v Exceli je 'referral_code'
             df_u_lookup = df_u.rename(columns={
                 'referral_code': 'kod_pouzity',
                 'mobil': 'p_mobil',
@@ -92,190 +107,264 @@ def get_full_data():
                 'priezvisko': 'p_priezvisko',
                 'pobocka': 'p_pobocka'
             })
-            df_merged = df_z.merge(df_u_lookup[['kod_pouzity', 'p_meno', 'p_priezvisko', 'p_mobil', 'p_pobocka']], 
-                                   on='kod_pouzity', how='left')
+            df_merged = df_z.merge(
+                df_u_lookup[['kod_pouzity', 'p_meno', 'p_priezvisko', 'p_mobil', 'p_pobocka']], 
+                on='kod_pouzity', 
+                how='left'
+            )
             return df_merged, df_u
         
         return df_z, df_u
     except Exception as e:
-        st.error(f"⚠️ Chyba dát: {str(e)}")
+        st.error(f"⚠️ KRITICKÁ CHYBA SYNCHRONIZÁCIE: {str(e)}")
         return pd.DataFrame(), pd.DataFrame()
 
-# --- 6. DESIGN (CSS ŠTÝLY) ---
-img_b64 = get_base64_of_bin_file("image5.png")
-st.markdown(f"""
+# =================================================================
+# 5. PRÉMIOVÝ VIZUÁLNY SYSTÉM (ADVANCED CSS)
+# =================================================================
+img_base64 = get_base64_of_bin_file("image5.png")
+background_css = f"""
 <style>
+    /* Hlavný kontajner aplikácie s dynamickým pozadím */
     .stApp {{
-        background: linear-gradient(rgba(0,0,0,0.85), rgba(0,0,0,0.85)), 
-                    url("data:image/png;base64,{img_b64 if img_b64 else ""}");
-        background-size: cover; background-attachment: fixed;
+        background: linear-gradient(rgba(0,0,0,0.88), rgba(0,0,0,0.88)), 
+                    url("data:image/png;base64,{img_base64 if img_base64 else ""}");
+        background-size: cover;
+        background-attachment: fixed;
     }}
-    [data-testid="stMainBlockContainer"] {{
-        background-color: rgba(26, 26, 26, 0.97) !important;
-        padding: 50px !important; border-radius: 25px; border: 1px solid #333;
-        box-shadow: 0 15px 40px rgba(0,0,0,0.7); margin-top: 20px;
-    }}
-    h1, h2, h3, span, label {{ color: white !important; font-family: 'Inter', sans-serif; }}
-    
-    .stButton > button {{
-        width: 100%; border-radius: 12px;
-        background: linear-gradient(135deg, #FFD700 0%, #B8860B 100%) !important;
-        color: black !important; font-weight: 800 !important;
-        border: none !important; padding: 12px; transition: 0.3s ease;
-    }}
-    .stButton > button:hover {{ transform: scale(1.02); box-shadow: 0 5px 15px rgba(218,165,32,0.4); }}
-    .stDataFrame {{ background-color: #111 !important; border-radius: 10px; }}
-</style>
-""", unsafe_allow_html=True)
 
-# --- 7. SESSION STATE ---
+    /* Štylizácia hlavného bloku s obsahom */
+    [data-testid="stMainBlockContainer"] {{
+        background-color: rgba(28, 28, 28, 0.97) !important;
+        padding: 50px !important;
+        border-radius: 30px;
+        border: 1px solid #444;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+        margin-top: 30px;
+        max-width: 1150px !important;
+        margin-left: auto;
+        margin-right: auto;
+    }}
+
+    /* Globálne nastavenie farieb textu */
+    h1, h2, h3, p, label, span, div {{
+        color: #ffffff !important;
+        font-family: 'Inter', sans-serif;
+    }}
+    
+    /* Zlaté Enterprise tlačidlá */
+    .stButton > button {{
+        width: 100%;
+        border-radius: 15px;
+        background: linear-gradient(135deg, #FFD700 0%, #B8860B 100%) !important;
+        color: #000000 !important;
+        font-weight: 900 !important;
+        border: none !important;
+        padding: 16px;
+        text-transform: uppercase;
+        letter-spacing: 1.8px;
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }}
+    
+    .stButton > button:hover {{
+        transform: scale(1.03);
+        box-shadow: 0 10px 25px rgba(255, 215, 0, 0.45);
+        color: #000 !important;
+    }}
+
+    /* Vstupné polia (Inputs) */
+    .stTextInput input, .stSelectbox div, .stNumberInput input {{
+        background-color: #222 !important;
+        color: white !important;
+        border-radius: 12px !important;
+        border: 1px solid #444 !important;
+    }}
+
+    /* Tabuľky (DataFrames) */
+    .stDataFrame {{
+        background-color: #1a1a1a !important;
+        border-radius: 15px;
+        border: 1px solid #333;
+    }}
+    
+    /* Odstránenie Streamlit loga v pätičke */
+    footer {{visibility: hidden;}}
+    #MainMenu {{visibility: hidden;}}
+</style>
+"""
+st.markdown(background_css, unsafe_allow_html=True)
+
+# =================================================================
+# 6. SESSION STATE MANAGEMENT
+# =================================================================
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
-# --- 8. VSTUPNÁ BRÁNA ---
+# =================================================================
+# 7. VSTUPNÁ BRÁNA (LOGIN / REGISTRÁCIA)
+# =================================================================
 if st.session_state['user'] is None:
-    _, col_login, _ = st.columns([1, 2, 1])
-    with col_login:
-        st.image("https://tepujem.sk/wp-content/uploads/2022/03/logo-tepujem-white.png", width=280)
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.image("https://tepujem.sk/wp-content/uploads/2022/03/logo-tepujem-white.png", width=320)
         st.title("💰 Partner Portál")
         
-        tab_log, tab_reg = st.tabs(["🔐 Prihlásenie", "📝 Registrácia"])
+        tab1, tab2 = st.tabs(["🔐 Prihlásenie", "📝 Registrácia partnera"])
         
-        with tab_log:
-            with st.form("login"):
-                m = st.text_input("Mobil (09XXXXXXXX)")
-                h = st.text_input("Heslo", type="password")
-                if st.form_submit_button("VSTÚPIŤ"):
-                    res = call_script("login", {"mobil": m, "heslo": h})
-                    if res.get("status") == "success":
-                        st.session_state['user'] = res
-                        st.rerun()
-                    else: st.error("❌ Nesprávny mobil alebo heslo.")
+        with tab1:
+            with st.form("login_form"):
+                m_log = st.text_input("Mobil (09XXXXXXXX)")
+                h_log = st.text_input("Heslo", type="password")
+                if st.form_submit_button("PRIHLÁSIŤ SA"):
+                    if validate_mobile(m_log):
+                        res = call_script("login", {"mobil": m_log, "heslo": h_log})
+                        if res.get("status") == "success":
+                            st.session_state['user'] = res
+                            st.success("✅ Vitajte späť!")
+                            time.sleep(1)
+                            st.rerun()
+                        else: st.error("❌ Nesprávne prihlasovacie údaje.")
+                    else: st.warning("⚠️ Zadajte správny formát mobilného čísla.")
 
-        with tab_reg:
-            with st.form("registration"):
+        with tab2:
+            with st.form("reg_form"):
                 r_pob = st.selectbox("Pobočka", ["celý Liptov", "Malacky", "Levice", "Bratislava, Trnava, Senec"])
-                r_m = st.text_input("Meno")
-                r_p = st.text_input("Priezvisko")
-                r_mob = st.text_input("Mobil")
+                col_m, col_p = st.columns(2)
+                r_meno = col_m.text_input("Meno")
+                r_priez = col_p.text_input("Priezvisko")
+                r_mob = st.text_input("Mobil (09XXXXXXXX)")
                 r_hes = st.text_input("Heslo", type="password")
-                r_kod = st.text_input("Váš unikátny kód")
-                if st.form_submit_button("REGISTROVAŤ SA"):
-                    if all([r_m, r_p, r_mob, r_hes, r_kod]):
-                        res = call_script("register", {"pobocka": r_pob, "meno": r_m, "priezvisko": r_p, "mobil": r_mob, "heslo": r_hes, "kod": r_kod})
-                        if res.get("status") == "success": st.success("✅ Hotovo! Môžete sa prihlásiť.")
+                r_kod = st.text_input("Váš unikátny referral kód")
+                
+                if st.form_submit_button("DOKONČIŤ REGISTRÁCIU"):
+                    if all([r_meno, r_priez, r_mob, r_hes, r_kod]) and validate_mobile(r_mob):
+                        res = call_script("register", {
+                            "pobocka": r_pob, "meno": r_meno, "priezvisko": r_priez,
+                            "mobil": r_mob, "heslo": r_hes, "kod": r_kod
+                        })
+                        if res.get("status") == "success": 
+                            st.success("🎉 Úspešne ste sa registrovali! Môžete sa prihlásiť.")
                         else: st.error(f"❌ {res.get('message')}")
-                    else: st.warning("❗ Vyplňte všetky polia.")
+                    else: st.error("❗ Skontrolujte, či sú vyplnené všetky polia správne.")
 
-# --- 9. HLAVNÝ SYSTÉM (DASHBOARD) ---
+# =================================================================
+# 8. HLAVNÝ SYSTÉM (DASHBOARD)
+# =================================================================
 else:
     u = st.session_state['user']
     
+    # --- BOČNÝ PANEL ---
     with st.sidebar:
         st.markdown(f"### 👤 {u['meno']} {u['priezvisko']}")
-        st.info(f"📍 Pob: {u['pobocka']}\n\n🔑 Rola: {u['rola']}")
+        st.info(f"📍 Pobočka: {u['pobocka']}\n\n🔑 Rola: {u['rola'].upper()}")
         st.divider()
-        if st.button("🔄 OBNOVIŤ DÁTA"): st.rerun()
+        if st.button("🔄 AKTUALIZOVAŤ DÁTA"): st.rerun()
         if st.button("🚪 ODHLÁSIŤ SA"):
             st.session_state['user'] = None
             st.rerun()
 
+    # Načítanie a spracovanie dát
     df, users_raw = get_full_data()
 
     if df.empty:
-        st.warning("⚠️ Databáza je prázdna.")
+        st.info("ℹ️ V databáze momentálne nie sú žiadne evidované zákazky.")
     else:
-        # --- SEKICA ADMIN / SUPERADMIN ---
+        # --- SEKICA PRE ADMINA A SUPERADMINA ---
         if u['rola'] in ['admin', 'superadmin']:
-            st.title(f"📊 Správa - {u['pobocka']}")
+            st.title(f"📊 Manažérsky Prehľad")
             
-            # Filter podľa právomocí
+            # Filtrovanie dát podľa pobočky (Superadmin vidí všetko)
             if u['rola'] == 'superadmin':
                 view_df = df
             else:
                 view_df = df[(df['pobocka_id'] == u['pobocka']) | (df['p_pobocka'] == u['pobocka'])]
 
-            # Metriky navrchu
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Obrat celkom", format_currency(view_df['suma_zakazky'].sum()))
-            c2.metric("K výplate", format_currency(view_df[~view_df['vyplatene_bool']]['provizia_odporucatel'].sum()))
-            c3.metric("Počet zákaziek", len(view_df))
+            # KPI Panely
+            m1, m2, m3 = st.columns(3)
+            with m1: st.metric("Obrat Celkom", format_currency(view_df['suma_zakazky'].sum()))
+            with m2: st.metric("Provízie k výplate", format_currency(view_df[~view_df['vyplatene_bool']]['provizia_odporucatel'].sum()))
+            with m3: st.metric("Počet Transakcií", len(view_df))
 
-            t1, t2, t3 = st.tabs(["🆕 NOVÉ (NACENIŤ)", "💰 VÝPLATY", "📑 ARCHÍV"])
+            st.divider()
+            
+            tab_price, tab_pay, tab_history = st.tabs(["🆕 NACENENIE", "💰 VÝPLATY", "📑 ARCHÍV"])
 
-            with t1:
-                st.subheader("Zákazky čakajúce na cenu")
+            # --- TAB 1: NACENENIE ---
+            with tab_price:
+                st.subheader("Nové požiadavky (bez zadanej ceny)")
                 to_price = view_df[view_df['suma_zakazky'] <= 0]
                 if to_price.empty:
-                    st.success("✅ Všetko je nacenené.")
+                    st.success("✅ Všetky zákazky sú aktuálne nacenené.")
                 else:
                     for idx, row in to_price.iterrows():
                         p_name = f"{row.get('p_meno', '---')} {row.get('p_priezvisko', '')}"
                         with st.container(border=True):
-                            st.write(f"**📍 Adresa:** {row['poznamka']}")
+                            st.write(f"**📍 Adresa/Poznámka:** {row['poznamka']}")
                             st.write(f"**Partner:** {p_name} ({row.get('p_mobil', '---')})")
-                            new_val = st.number_input("Zadajte sumu (€)", key=f"inp_{idx}", min_value=0.0, step=10.0)
+                            n_val = st.number_input(f"Suma za tepovanie (€)", key=f"inp_{idx}", min_value=0.0, step=5.0)
                             
                             if st.button("ULOŽIŤ SUMU", key=f"btn_{idx}"):
-                                # FIX: Ak je Superadmin, musí poslať branch ID priamo zo zakazky, inak mu to Sheets nepovoli
-                                b_to_send = row['pobocka_id'] if u['rola'] == 'superadmin' else u['pobocka']
+                                # KRITICKÝ FIX: Pre Superadmina posielame bypass reťazec
+                                auth_branch = "superadmin" if u['rola'] == 'superadmin' else u['pobocka']
                                 res = call_script("updateSuma", {
                                     "row_index": row['row_index'], 
-                                    "suma": new_val, 
-                                    "admin_pobocka": b_to_send
+                                    "suma": n_val, 
+                                    "admin_pobocka": auth_branch
                                 })
                                 if res.get("status") == "success":
-                                    st.success("✅ Zapísané!")
-                                    time.sleep(1)
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Chyba: {res.get('message')}")
+                                    st.success("🎉 Suma úspešne zapísaná!"); time.sleep(1); st.rerun()
+                                else: 
+                                    st.error(f"❌ Chyba zápisu: {res.get('message')}")
 
-            with t2:
-                st.subheader("Pripravené na vyplatenie")
+            # --- TAB 2: VÝPLATY ---
+            with tab_pay:
+                st.subheader("Provízie čakajúce na vyplatenie")
                 to_pay = view_df[(view_df['suma_zakazky'] > 0) & (~view_df['vyplatene_bool'])]
                 if to_pay.empty:
-                    st.info("Žiadne provízie na vyplatenie.")
+                    st.info("Žiadne otvorené provízie na úhradu.")
                 else:
                     for kod in to_pay['kod_pouzity'].unique():
                         sub = to_pay[to_pay['kod_pouzity'] == kod]
-                        name = f"{sub['p_meno'].iloc[0]} {sub['p_priezvisko'].iloc[0]}"
-                        with st.expander(f"💰 {name} | K výplate: {format_currency(sub['provizia_odporucatel'].sum())}"):
-                            if st.button(f"Označiť {kod} ako vyplatené", key=f"pay_{kod}"):
-                                for _, r in sub.iterrows():
-                                    call_script("markAsPaid", {"row_index": r['row_index'], "admin_pobocka": u['pobocka']})
-                                st.rerun()
+                        partner_full = f"{sub['p_meno'].iloc[0]} {sub['p_priezvisko'].iloc[0]}"
+                        with st.expander(f"💰 {partner_full} | Celkom: {format_currency(sub['provizia_odporucatel'].sum())}"):
+                            if st.button(f"Označiť {kod} ako VYPLATENÉ", key=f"pay_{kod}"):
+                                auth_branch = "superadmin" if u['rola'] == 'superadmin' else u['pobocka']
+                                for _, p_row in sub.iterrows():
+                                    call_script("markAsPaid", {"row_index": p_row['row_index'], "admin_pobocka": auth_branch})
+                                st.success("Platba bola úspešne zaznamenaná."); time.sleep(1); st.rerun()
                             st.dataframe(sub[['datum', 'poznamka', 'suma_zakazky', 'provizia_odporucatel']], use_container_width=True)
 
-            with t3:
-                st.subheader("História všetkých záznamov")
-                cols = ['datum', 'kod_pouzity', 'poznamka', 'suma_zakazky', 'provizia_odporucatel', 'vyplatene']
-                st.dataframe(view_df[[c for c in cols if c in view_df.columns]], use_container_width=True)
+            # --- TAB 3: ARCHÍV ---
+            with tab_history:
+                st.subheader("Kompletná história záznamov")
+                st.dataframe(view_df[['datum', 'kod_pouzity', 'poznamka', 'suma_zakazky', 'provizia_odporucatel', 'vyplatene']], use_container_width=True, hide_index=True)
 
-        # --- SEKICA PARTNER ---
+        # --- SEKICA PRE PARTNERA ---
         else:
             st.title("💰 Môj Provízny Prehľad")
             my_df = df[df['kod_pouzity'] == u['kod']]
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Zarobené celkovo", format_currency(my_df['provizia_odporucatel'].sum()))
-            c2.metric("Nezaplatené", format_currency(my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum()))
-            c3.metric("Počet zákaziek", len(my_df))
+            with c1: st.metric("Zarobené celkovo", format_currency(my_df['provizia_odporucatel'].sum()))
+            with c2: st.metric("K výplate", format_currency(my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum()))
+            with c3: st.metric("Počet zákaziek", len(my_df))
 
             st.divider()
-            st.subheader("Moje zákazky")
+            st.subheader("Zoznam mojich odporúčaní")
             if my_df.empty:
-                st.info("Zatiaľ ste neodoslali žiadne zákazky.")
+                st.info("Zatiaľ ste neposlali žiadne odporúčania.")
             else:
                 st.dataframe(
                     my_df[['datum', 'poznamka', 'suma_zakazky', 'provizia_odporucatel', 'vyplatene']],
                     column_config={
                         "suma_zakazky": st.column_config.NumberColumn("Cena (€)", format="%.2f"),
-                        "provizia_odporucatel": st.column_config.NumberColumn("Provízia (€)", format="%.2f")
+                        "provizia_odporucatel": st.column_config.NumberColumn("Provízia (€)", format="%.2f"),
+                        "vyplatene": "Stav úhrady"
                     },
-                    use_container_width=True, hide_index=True
+                    use_container_width=True,
+                    hide_index=True
                 )
 
-    # --- 10. FOOTER ---
+    # --- FOOTER ---
     st.markdown("---")
-    st.caption(f"© {datetime.now().year} TEPUJEM.SK Enterprise | v5.4.0-STABLE")
+    st.caption(f"© {datetime.now().year} TEPUJEM.SK Enterprise Backend | Verzia 5.5.0-MASTER-FULL")
