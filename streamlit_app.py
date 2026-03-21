@@ -5,11 +5,12 @@ import base64
 import os
 
 # --- KONFIGURÁCIA ---
+# layout="centered" zabezpečí, že sa nič nerozťahuje na celú šírku
+st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="centered")
+
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
 
-st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
-
-# --- FUNKCIA NA NAČÍTANIE OBRÁZKA PRE POZADIE ---
+# --- FUNKCIA NA NAČÍTANIE OBRÁZKA ---
 def get_base64_of_bin_file(bin_file):
     try:
         with open(bin_file, 'rb') as f:
@@ -18,37 +19,52 @@ def get_base64_of_bin_file(bin_file):
     except FileNotFoundError:
         return None
 
-# --- APLIKÁCIA CSS POZADIA ---
+# --- CSS PRE VZHĽAD (Centrovanie a pozadie) ---
 img_base64 = get_base64_of_bin_file("image5.png")
 
-if img_base64:
-    page_bg_img = f'''
-    <style>
-    [data-testid="stAppViewContainer"] {{
-        background-image: url("data:image/png;base64,{img_base64}");
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        background-attachment: fixed;
-    }}
-    /* Biele priesvitné pozadie pre obsah */
-    [data-testid="stMainBlockContainer"] {{
-        background-color: rgba(255, 255, 255, 0.85);
-        padding: 2rem;
-        border-radius: 15px;
-    }}
-    </style>
-    '''
-    st.markdown(page_bg_img, unsafe_allow_html=True)
+# CSS šablóna
+css = """
+<style>
+/* Pozadie celej stránky */
+[data-testid="stAppViewContainer"] {
+    background-image: url("data:image/png;base64,REPLACE_ME");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}
 
-# --- INICIALIZÁCIA ---
+/* Prekrytie pre zjemnenie obrázka (biely filter 70%) */
+[data-testid="stAppViewContainer"]::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(255, 255, 255, 0.7); 
+    pointer-events: none;
+}
+
+/* Hlavný kontajner obsahu - fixná šírka */
+[data-testid="stMainBlockContainer"] {
+    max-width: 600px !important; 
+    background-color: rgba(255, 255, 255, 0.95); 
+    padding: 30px !important;
+    border-radius: 20px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    margin-top: 30px;
+}
+</style>
+"""
+
+# Ak máme obrázok, vložíme ho do CSS
+if img_base64:
+    css = css.replace("REPLACE_ME", img_base64)
+    st.markdown(css, unsafe_allow_html=True)
+
+# --- API ---
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
-# --- API ---
 def call_script(action, params=None):
-    if params is None:
-        params = {}
+    if params is None: params = {}
     params['action'] = action
     try:
         return requests.get(SCRIPT_URL, params=params, timeout=40).json()
@@ -74,17 +90,15 @@ def get_users():
     except:
         return pd.DataFrame()
 
-# --- LOGIN / REGISTER ---
+# --- LOGIN / DASHBOARD ---
 if st.session_state['user'] is None:
     st.title("💰 Zarob si s TEPUJEM.SK")
-
     tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia"])
-
+    
     with tab1:
         with st.form("login"):
             m = st.text_input("Mobil")
             h = st.text_input("Heslo", type="password")
-
             if st.form_submit_button("Login"):
                 res = call_script("login", {"mobil": m, "heslo": h})
                 if res.get("status") == "success":
@@ -92,7 +106,6 @@ if st.session_state['user'] is None:
                     st.rerun()
                 else:
                     st.error("Zlé údaje")
-
     with tab2:
         with st.form("register"):
             pob = st.selectbox("Pobočka", get_regions())
@@ -100,26 +113,18 @@ if st.session_state['user'] is None:
             mob = st.text_input("Mobil")
             hes = st.text_input("Heslo", type="password")
             kod = st.text_input("Kód")
-
             if st.form_submit_button("Registrovať"):
                 if not all([meno, mob, hes, kod]):
                     st.warning("Vyplň všetko")
                 else:
-                    res = call_script("register", {
-                        "pobocka": pob,
-                        "priezvisko": meno,
-                        "mobil": mob,
-                        "heslo": hes,
-                        "kod": kod
-                    })
+                    res = call_script("register", {"pobocka": pob, "priezvisko": meno, "mobil": mob, "heslo": hes, "kod": kod})
                     if res.get("status") == "success":
                         get_users.clear() 
                         st.success("Hotovo. Teraz sa môžete prihlásiť.")
-
-# --- DASHBOARD ---
 else:
     u = st.session_state['user']
-
+    
+    # Bočný panel - ak je otvorený, zobrazí sa aj tak, ale obsah je centrovaný
     st.sidebar.title(f"👤 {u.get('meno')}")
     if st.sidebar.button("Odhlásiť"):
         st.session_state['user'] = None
@@ -139,89 +144,43 @@ else:
 
     # --- JOIN USERS ---
     if not users.empty:
-        users_renamed = users.rename(columns={
-            'referral_code': 'kod_pouzity',
-            'priezvisko': 'meno_user',
-            'mobil': 'mobil_user',
-            'meno': 'pobocka_odporucatela'
-        })
-        df = df.merge(
-            users_renamed[['kod_pouzity', 'meno_user', 'mobil_user', 'pobocka_odporucatela']],
-            on='kod_pouzity',
-            how='left'
-        )
+        users_renamed = users.rename(columns={'referral_code': 'kod_pouzity', 'priezvisko': 'meno_user', 'mobil': 'mobil_user', 'meno': 'pobocka_odporucatela'})
+        df = df.merge(users_renamed[['kod_pouzity', 'meno_user', 'mobil_user', 'pobocka_odporucatela']], on='kod_pouzity', how='left')
     else:
         df['pobocka_odporucatela'] = None
         df['meno_user'] = None
         df['mobil_user'] = None
-
     df['pridelena_pobocka'] = df['pobocka_odporucatela'].fillna(df['pobocka_id'])
 
-    # --- ADMIN ---
+    # --- ADMIN / PARTNER ---
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka_id')}")
-
-        if u['rola'] == 'superadmin':
-            active_df = df 
-        else:
-            active_df = df[df['pridelena_pobocka'] == u['pobocka_id']]
-
+        active_df = df if u['rola'] == 'superadmin' else df[df['pridelena_pobocka'] == u['pobocka_id']]
         t1, t2 = st.tabs(["Na nacenenie", "Na vyplatenie"])
-
         with t1:
             nac = active_df[active_df['suma_zakazky'] <= 0]
-            if nac.empty:
-                st.success("Máte všetko nacenené! 👍")
+            if nac.empty: st.success("Všetko nacenené! 👍")
             else:
                 for i, row in nac.iterrows():
-                    meno = row.get('meno_user', 'Neznámy')
-                    mobil = row.get('mobil_user', '')
-
-                    with st.expander(f"{meno} ({mobil}) - {row['poznamka']}"):
+                    with st.expander(f"{row.get('meno_user', 'Neznámy')} - {row['poznamka']}"):
                         suma = st.number_input("Suma €", key=f"s_{i}", min_value=0.0, step=1.0)
                         if st.button("Uložiť", key=f"b_{i}"):
-                            call_script("updateSuma", {
-                                "row_index": row['row_index'],
-                                "suma": suma
-                            })
-                            get_data.clear()
-                            st.rerun()
-
+                            call_script("updateSuma", {"row_index": row['row_index'], "suma": suma})
+                            get_data.clear(); st.rerun()
         with t2:
             pay = active_df[(active_df['suma_zakazky'] > 0) & (~active_df['vyplatene_bool'])]
-            if pay.empty:
-                st.info("Nič na vyplatenie.")
+            if pay.empty: st.info("Nič na vyplatenie.")
             else:
                 for kod in pay['kod_pouzity'].unique():
                     p_data = pay[pay['kod_pouzity'] == kod]
-                    meno = p_data['meno_user'].iloc[0] if not p_data['meno_user'].isna().all() else "Neznámy"
-                    mobil = p_data['mobil_user'].iloc[0] if not p_data['mobil_user'].isna().all() else ""
-
-                    with st.expander(f"{meno} ({mobil}) | Spolu na výplatu: {p_data['provizia_odporucatel'].sum():.2f} €"):
-                        disp_pay = p_data.copy()
-                        disp_pay['Suma provízie'] = disp_pay['provizia_odporucatel'].apply(lambda x: f"{x:.2f} €")
-                        disp_pay.rename(columns={'poznamka': 'Poznámka'}, inplace=True)
-                        st.table(disp_pay[['Poznámka', 'Suma provízie']])
-
+                    with st.expander(f"{p_data['meno_user'].iloc[0]} | Výplata: {p_data['provizia_odporucatel'].sum():.2f} €"):
+                        st.table(p_data[['poznamka', 'provizia_odporucatel']])
                         if st.button("Označiť ako vyplatené", key=f"pay_{kod}"):
-                            for _, r in p_data.iterrows():
-                                call_script("markAsPaid", {"row_index": r['row_index']})
-                            get_data.clear()
-                            st.rerun()
-
-    # --- PARTNER (Odporúčateľ) ---
+                            for _, r in p_data.iterrows(): call_script("markAsPaid", {"row_index": r['row_index']})
+                            get_data.clear(); st.rerun()
     else:
         st.title("💰 Môj prehľad")
         my_df = df[df['kod_pouzity'] == u['kod']]
-
         st.metric("Zarobené celkovo", f"{my_df['provizia_odporucatel'].sum():.2f} €")
-        st.metric("Čaká na výplatu", f"{my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum():.2f} €")
-
-        if my_df.empty:
-            st.write("Zatiaľ nemáte žiadne odporúčania.")
-        else:
-            display_df = my_df.copy()
-            display_df['Zárobok'] = display_df['provizia_odporucatel'].apply(lambda x: f"{x:.2f} €")
-            display_df['Vyplatené'] = display_df['vyplatene_bool'].apply(lambda x: "áno" if x else "čaká sa")
-            display_df.rename(columns={'poznamka': 'Poznámka'}, inplace=True)
-            st.table(display_df[['Poznámka', 'Zárobok', 'Vyplatené']])
+        if not my_df.empty:
+            st.table(my_df[['poznamka', 'provizia_odporucatel']])
