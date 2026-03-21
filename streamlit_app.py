@@ -201,14 +201,16 @@ else:
                 st.success("Všetko nacenené! 👍")
             else:
                 for i, row in nac.iterrows():
-                    # Zobrazenie údajov získateľa: Meno Priezvisko (Telefón)
+                    # Ťaháme lokalitu priamo zo stĺpca 'mesto' (napr. Paraguay)
+                    lokalita = row.get('mesto', 'Neznáme')
+                    # Celé meno získateľa a telefón
                     partner_info = f"{row.get('meno_P', 'Neznámy')} {row.get('priezvisko_P', '')} ({row.get('mobil_partnera', '---')})"
                     
-                    with st.expander(f"Zákazník: {row.get('poznamka')} | Získateľ: {partner_info}"):
+                    with st.expander(f"📍 {lokalita} - {row.get('poznamka')} | Získateľ: {partner_info}"):
                         suma_val = st.number_input("Suma €", key=f"s_{i}", min_value=0.0, step=1.0)
                         if st.button("Uložiť", key=f"b_{i}"):
                             with st.spinner("Zapisujem..."):
-                                # Posielame index a sumu (pre istotu ako string pre GS)
+                                # Posielame index a sumu ako string pre stabilitu v Sheets
                                 call_script("updateSuma", {"row_index": str(row['row_index']), "suma": str(suma_val)})
                                 time.sleep(1.5)
                                 st.rerun()
@@ -218,10 +220,10 @@ else:
             if not pay.empty:
                 for kod in pay['kod_pouzity'].dropna().unique():
                     p_data = pay[pay['kod_pouzity'] == kod]
-                    # Info o partnerovi pre výplatu
+                    # Celé meno a telefón partnera pre sekciu výplat
                     partner_full = f"{p_data['meno_P'].iloc[0]} {p_data['priezvisko_P'].iloc[0]} ({p_data['mobil_partnera'].iloc[0]})"
                     
-                    with st.expander(f"Získateľ: {partner_full} | Spolu: {p_data['provizia_odporucatel'].sum():.2f} €"):
+                    with st.expander(f"👤 {partner_full} | Spolu: {p_data['provizia_odporucatel'].sum():.2f} €"):
                         st.table(p_data[['poznamka', 'provizia_odporucatel']])
                         if st.button(f"Označiť ako vyplatené ({kod})", key=f"pay_{kod}"):
                             for _, r in p_data.iterrows():
