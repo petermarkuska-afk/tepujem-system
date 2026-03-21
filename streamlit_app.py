@@ -50,7 +50,7 @@ def validate_mobile(mob):
     pattern = r'^09\d{8}$'
     return re.match(pattern, mob) is not None
 
-# --- 3. DÁTOVÉ FUNKCIE S CACHE (Ochrana pred preťažením) ---
+# --- 3. DÁTOVÉ FUNKCIE S CACHE ---
 @st.cache_data(ttl=600)
 def get_regions_cached():
     res = call_script("getRegions")
@@ -157,11 +157,10 @@ if st.session_state['user'] is None:
                     if res.get("status") == "success":
                         st.success("Registrácia prebehla úspešne! Môžete sa prihlásiť.")
                     else:
-                        st.error("Chyba pri registrácii (možno kód už existuje).")
+                        st.error("Chyba pri registrácii.")
 
 else:
     u = st.session_state['user']
-    
     st.sidebar.title(f"👤 {u.get('meno', 'Užívateľ')}")
     st.sidebar.info(f"Rola: {u.get('rola', 'Partner').capitalize()}")
     
@@ -187,23 +186,23 @@ else:
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
 
-    # Merge dát o partneroch (Dôležité: pobocka_partnera slúži LEN na interné filtrovanie)
+    # Merge dát o partneroch (Interné priradenie pobočky)
     if not users.empty:
         u_map = users.rename(columns={
             'referral_code': 'kod_pouzity', 
-            'mobil': 'mob_P', 
+            'pobocka': 'pob_interna',
             'meno': 'meno_P',
             'priezvisko': 'priez_P',
-            'pobocka': 'pobocka_partnera'
+            'mobil': 'mob_P'
         })
-        df = df.merge(u_map[['kod_pouzity', 'meno_P', 'priez_P', 'mob_P', 'pobocka_partnera']], on='kod_pouzity', how='left')
+        df = df.merge(u_map[['kod_pouzity', 'pob_interna', 'meno_P', 'priez_P', 'mob_P']], on='kod_pouzity', how='left')
 
     # --- ADMIN VIEW ---
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka')}")
         
-        # Filtrujeme podľa toho, kam partner patrí (pobocka_partnera), ale nezobrazujeme to
-        active_df = df if u['rola'] == 'superadmin' else df[df['pobocka_partnera'] == u['pobocka']]
+        # Interné filtrovanie
+        active_df = df if u['rola'] == 'superadmin' else df[df['pob_interna'] == u['pobocka']]
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Nové zákazky", len(active_df[active_df['suma_zakazky'] <= 0]))
@@ -218,10 +217,10 @@ else:
                 st.success("Všetky zákazky sú nacenené.")
             else:
                 for idx, r in nacenit.iterrows():
-                    # Čisté zobrazenie: Mesto (zo zákazky), Kód a Poznámka
+                    # Čistý nadpis bez "ťahania" pobočky z users_data
                     nadpis = f"📍 {r.get('mesto', '---')} | Kód: {r.get('kod_pouzity', '---')} | {r.get('poznamka', '---')}"
                     with st.expander(nadpis):
-                        st.write(f"**Partner:** {r.get('meno_P', 'Neznámy')} {r.get('priez_P', '')}")
+                        st.write(f"**Partner:** {r.get('meno_P', 'Neznámy')} {r.get('priez_P', '')} ({r.get('mob_P', '-')})")
                         val = st.number_input("Suma za prácu (€)", key=f"inp_{idx}", min_value=0.0, step=1.0)
                         if st.button("Uložiť cenu", key=f"btn_{idx}"):
                             with st.spinner("Zapisujem..."):
@@ -238,7 +237,6 @@ else:
                     p_rows = nevyplatene[nevyplatene['kod_pouzity'] == k]
                     p_label = f"{p_rows['meno_P'].iloc[0]} {p_rows['priez_P'].iloc[0]} ({p_rows['mob_P'].iloc[0]})"
                     with st.expander(f"👤 {p_label} | Suma: {p_rows['provizia_odporucatel'].sum():.2f} €"):
-                        # Tu zobrazujeme len mesto zo zákazky a poznámku, žiadna pobočka partnera
                         st.dataframe(p_rows[['mesto', 'poznamka', 'provizia_odporucatel']], use_container_width=True, hide_index=True)
                         if st.button(f"Označiť ako vyplatené ({k})", key=f"pay_{k}"):
                             for _, row_to_pay in p_rows.iterrows():
@@ -258,7 +256,5 @@ else:
         if not my_data.empty:
             st.subheader("Prehľad mojich zákaziek")
             display_df = my_data[['mesto', 'poznamka', 'provizia_odporucatel', 'vyplatene']].copy()
-            display_df.columns = ['Mesto', 'Popis', 'Moja provízia (€)', 'Stav výplaty']
+            display_df.columns = ['Mesto', 'Poznámka', 'Provízia (€)', 'Stav výplaty']
             st.dataframe(display_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Zatiaľ nemáte žiadne evidované zákazky.")
