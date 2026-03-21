@@ -18,7 +18,7 @@ def get_base64_of_bin_file(bin_file):
     except FileNotFoundError:
         return None
 
-# --- CSS PRE VZHĽAD (DARK KARTA + SVETLÉ INPUTY) ---
+# --- CSS PRE VZHĽAD (DARK MODE) ---
 img_base64 = get_base64_of_bin_file("image5.png")
 
 css = """
@@ -36,11 +36,11 @@ css = """
     content: "";
     position: absolute;
     top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0, 0, 0, 0.6); 
+    background: rgba(0, 0, 0, 0.7); 
     pointer-events: none;
 }
 
-/* Tmavá karta pre obsah */
+/* Karta pre obsah */
 [data-testid="stMainBlockContainer"] {
     max-width: 600px !important; 
     background-color: #1e1e1e !important; 
@@ -54,27 +54,36 @@ css = """
 /* Texty vnútri karty */
 [data-testid="stMainBlockContainer"] h1, 
 [data-testid="stMainBlockContainer"] label, 
+[data-testid="stMainBlockContainer"] p, 
 [data-testid="stMainBlockContainer"] div {
     color: white !important;
 }
 
-/* Input polia - Biele pozadie, čierny text */
-input {
-    background-color: white !important;
-    color: black !important;
-}
-
-/* Tlačidlá - Biele pozadie, čierny text */
-button {
-    background-color: white !important;
-    color: black !important;
-    font-weight: bold !important;
-    border: none !important;
-}
-
-/* Tab výbery - zmena farby písma */
-[data-baseweb="tab"] {
+/* Vstupné polia - Sivé pozadie, Biely text */
+[data-testid="stTextInput"] input, 
+[data-testid="stNumberInput"] input {
+    background-color: #333333 !important;
     color: white !important;
+    border: 1px solid #555 !important;
+}
+
+/* Tlačidlá - Sivé pozadie, Biely text */
+[data-testid="stFormSubmitButton"] button {
+    background-color: #444 !important;
+    color: white !important;
+    border: 1px solid #666 !important;
+}
+
+/* Taby - aby boli čitateľné */
+[data-baseweb="tab-list"] {
+    background-color: transparent !important;
+}
+[data-baseweb="tab"] {
+    color: #cccccc !important;
+}
+[data-baseweb="tab"][aria-selected="true"] {
+    color: white !important;
+    border-bottom: 2px solid white !important;
 }
 </style>
 """
