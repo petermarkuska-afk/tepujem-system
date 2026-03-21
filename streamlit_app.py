@@ -157,7 +157,7 @@ if st.session_state['user'] is None:
     _, col_login, _ = st.columns([1, 2, 1])
     with col_login:
         st.image("https://tepujem.sk/wp-content/uploads/2022/03/logo-tepujem-white.png", width=300)
-        st.title("💰 Partner Portal")
+        st.title("💰 Zarob si s TEPUJEM.SK")
         
         t_log, t_reg = st.tabs(["🔐 Prihlásenie", "📝 Registrácia"])
         
