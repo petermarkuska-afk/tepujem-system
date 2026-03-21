@@ -44,14 +44,14 @@ def validate_mobile(mob):
     pattern = r'^09\d{8}$'
     return re.match(pattern, mob) is not None
 
-# --- 3. DÁTOVÉ FUNKCIE (BEZ CACHE) ---
+# --- 3. DÁTOVÉ FUNKCIE (BEZ CACHE PRE ŽIVÉ DÁTA) ---
 def get_regions():
     """Načíta zoznam pobočiek."""
     res = call_script("getRegions")
     return res.get("regions", [])
 
 def get_data():
-    """Načíta transakcie/zákazky z Google Sheets."""
+    """Načíta transakcie/zákazky z Google Sheets (VŽDY NAŽIVO)."""
     try:
         response = requests.get(f"{SCRIPT_URL}?action=getZakazky", timeout=35)
         return pd.DataFrame(response.json())
@@ -59,7 +59,7 @@ def get_data():
         return pd.DataFrame()
 
 def get_users():
-    """Načíta užívateľov z users_data."""
+    """Načíta užívateľov z users_data (VŽDY NAŽIVO)."""
     try:
         response = requests.get(f"{SCRIPT_URL}?action=getUsers", timeout=35)
         return pd.DataFrame(response.json())
@@ -146,7 +146,7 @@ if st.session_state['user'] is None:
                         "adresa": adresa, "mobil": mob, "heslo": hes, "kod": kod
                     })
                     if res.get("status") == "success":
-                        st.success("Registrácia úspešná! Prihláste sa.")
+                        st.success("Registrácia úspešná! Teraz sa môžete prihlásiť.")
                     else:
                         st.error("Chyba pri registrácii.")
 
@@ -157,6 +157,7 @@ else:
         st.session_state['user'] = None
         st.rerun()
 
+    # Sťahovanie čerstvých dát (BEZ CACHE)
     df = get_data()
     users = get_users()
 
@@ -168,14 +169,29 @@ else:
     df['provizia_odporucatel'] = pd.to_numeric(df['provizia_odporucatel'], errors='coerce').fillna(0)
     df['vyplatene_bool'] = df['vyplatene'].astype(str).str.strip().str.upper() == "TRUE"
 
+    # Merge údajov získateľa (Meno, Priezvisko, Telefón) z tabuľky users_data
     if not users.empty:
-        users_clean = users.rename(columns={'referral_code': 'kod_pouzity', 'mobil': 'mobil_partnera', 'pobocka': 'pob_partnera'})
-        df = df.merge(users_clean[['kod_pouzity', 'meno', 'priezvisko', 'adresa', 'mobil_partnera', 'pob_partnera']], on='kod_pouzity', how='left')
+        users_clean = users.rename(columns={
+            'referral_code': 'kod_pouzity', 
+            'mobil': 'mobil_partnera', 
+            'meno': 'meno_P',
+            'priezvisko': 'priezvisko_P'
+        })
+        df = df.merge(
+            users_clean[['kod_pouzity', 'meno_P', 'priezvisko_P', 'mobil_partnera']], 
+            on='kod_pouzity', 
+            how='left'
+        )
 
     # --- ADMIN VIEW ---
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka', 'Neznáma')}")
-        active_df = df if u['rola'] == 'superadmin' else df[(df['pobocka_id'] == u['pobocka']) | (df['pob_partnera'] == u['pobocka'])]
+        
+        # Filtrovanie podľa premenovaného stĺpca 'mesto'
+        if u['rola'] == 'superadmin':
+            active_df = df
+        else:
+            active_df = df[df['mesto'] == u['pobocka']]
 
         t1, t2 = st.tabs(["Na nacenenie", "Na vyplatenie"])
 
@@ -185,11 +201,14 @@ else:
                 st.success("Všetko nacenené! 👍")
             else:
                 for i, row in nac.iterrows():
-                    with st.expander(f"Zákazník: {row.get('poznamka')} | Partner: {row.get('meno', '---')}"):
+                    # Zobrazenie údajov získateľa: Meno Priezvisko (Telefón)
+                    partner_info = f"{row.get('meno_P', 'Neznámy')} {row.get('priezvisko_P', '')} ({row.get('mobil_partnera', '---')})"
+                    
+                    with st.expander(f"Zákazník: {row.get('poznamka')} | Získateľ: {partner_info}"):
                         suma_val = st.number_input("Suma €", key=f"s_{i}", min_value=0.0, step=1.0)
                         if st.button("Uložiť", key=f"b_{i}"):
                             with st.spinner("Zapisujem..."):
-                                # OPRAVA: Posielame sumu ako string, aby ju Google Sheets nezdeformoval
+                                # Posielame index a sumu (pre istotu ako string pre GS)
                                 call_script("updateSuma", {"row_index": str(row['row_index']), "suma": str(suma_val)})
                                 time.sleep(1.5)
                                 st.rerun()
@@ -199,9 +218,12 @@ else:
             if not pay.empty:
                 for kod in pay['kod_pouzity'].dropna().unique():
                     p_data = pay[pay['kod_pouzity'] == kod]
-                    with st.expander(f"Partner: {kod} | Spolu: {p_data['provizia_odporucatel'].sum():.2f} €"):
+                    # Info o partnerovi pre výplatu
+                    partner_full = f"{p_data['meno_P'].iloc[0]} {p_data['priezvisko_P'].iloc[0]} ({p_data['mobil_partnera'].iloc[0]})"
+                    
+                    with st.expander(f"Získateľ: {partner_full} | Spolu: {p_data['provizia_odporucatel'].sum():.2f} €"):
                         st.table(p_data[['poznamka', 'provizia_odporucatel']])
-                        if st.button("Označiť ako vyplatené", key=f"pay_{kod}"):
+                        if st.button(f"Označiť ako vyplatené ({kod})", key=f"pay_{kod}"):
                             for _, r in p_data.iterrows():
                                 call_script("markAsPaid", {"row_index": str(r['row_index'])})
                             st.rerun()
