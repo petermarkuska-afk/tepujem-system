@@ -135,7 +135,7 @@ if st.session_state['user'] is None:
             pob = st.selectbox("Vyber najbližšiu pobočku", get_regions())
             meno = st.text_input("Meno")
             priezvisko = st.text_input("Priezvisko")
-            adresa = st.text_input("Adresa")
+            adresa = st.text_input("Adresa + Mesto")
             mob = st.text_input("Mobilné číslo (formát 09XXXXXXXX)")
             hes = st.text_input("Heslo", type="password")
             kod = st.text_input("Vlastný kód")
