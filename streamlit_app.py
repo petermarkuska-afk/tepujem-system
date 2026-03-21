@@ -33,6 +33,8 @@ def call_script(action, params=None):
     params['action'] = action
     
     try:
+        # Pridaný timestamp na obídenie agresívnej cache prehliadača pri zápise
+        params['t'] = str(int(time.time()))
         response = requests.get(SCRIPT_URL, params=params, timeout=45)
         if response.status_code == 200:
             return response.json()
@@ -218,8 +220,13 @@ else:
                 st.success("Všetky zákazky sú nacenené.")
             else:
                 for idx, r in nacenit.iterrows():
-                    p_name = f"{r.get('meno_P', 'Neznámy')} {r.get('priez_P', '')}"
-                    with st.expander(f"📍 {r.get('mesto', '---')} | {r.get('poznamka')} | Partner: {p_name}"):
+                    # Úprava popisu podľa požiadavky: Mesto, Kód a Poznámka
+                    mesto_val = r.get('mesto', '---')
+                    kod_val = r.get('kod_pouzity', '---')
+                    poznamka_val = r.get('poznamka', 'Bez poznámky')
+                    
+                    with st.expander(f"📍 {mesto_val} | Kód: {kod_val} | {poznamka_val}"):
+                        st.write(f"**Partner:** {r.get('meno_P', '')} {r.get('priez_P', '')} ({r.get('mob_P', '---')})")
                         val = st.number_input("Suma za prácu (€)", key=f"inp_{idx}", min_value=0.0, step=1.0)
                         if st.button("Uložiť cenu", key=f"btn_{idx}"):
                             with st.spinner("Zapisujem..."):
@@ -236,7 +243,7 @@ else:
                     p_rows = nevyplatene[nevyplatene['kod_pouzity'] == k]
                     p_label = f"{p_rows['meno_P'].iloc[0]} {p_rows['priez_P'].iloc[0]} ({p_rows['mob_P'].iloc[0]})"
                     with st.expander(f"👤 {p_label} | Suma: {p_rows['provizia_odporucatel'].sum():.2f} €"):
-                        st.dataframe(p_rows[['poznamka', 'provizia_odporucatel']], use_container_width=True)
+                        st.dataframe(p_rows[['mesto', 'poznamka', 'provizia_odporucatel']], use_container_width=True)
                         if st.button(f"Označiť ako vyplatené ({k})", key=f"pay_{k}"):
                             for _, row_to_pay in p_rows.iterrows():
                                 call_script("markAsPaid", {"row_index": str(row_to_pay['row_index'])})
@@ -254,9 +261,8 @@ else:
         
         if not my_data.empty:
             st.subheader("Prehľad mojich zákaziek")
-            # Upravené zobrazenie tabuľky
-            display_df = my_data[['poznamka', 'provizia_odporucatel', 'vyplatene']].copy()
-            display_df.columns = ['Popis', 'Moja provízia (€)', 'Stav výplaty']
+            display_df = my_data[['mesto', 'poznamka', 'provizia_odporucatel', 'vyplatene']].copy()
+            display_df.columns = ['Mesto', 'Popis', 'Moja provízia (€)', 'Stav výplaty']
             st.dataframe(display_df, use_container_width=True, hide_index=True)
         else:
             st.info("Zatiaľ nemáte žiadne evidované zákazky pod vaším kódom.")
