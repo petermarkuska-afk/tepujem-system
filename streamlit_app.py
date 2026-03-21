@@ -1,33 +1,64 @@
 import streamlit as st
 import pandas as pd
 import requests
-import time
+import base64
+import os
 
+# --- KONFIGURÁCIA ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzLxqt5QwUvu2zha5NEOg97-7NtPLTbhMd2YQ3ORV6YRny7SvMZwBSgVQ6Zyd3u9v-IKw/exec"
 
 st.set_page_config(page_title="TEPUJEM Portál", page_icon="💰", layout="wide")
 
+# --- FUNKCIA NA NAČÍTANIE OBRÁZKA PRE POZADIE ---
+def get_base64_of_bin_file(bin_file):
+    try:
+        with open(bin_file, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except FileNotFoundError:
+        return None
+
+# --- APLIKÁCIA CSS POZADIA ---
+img_base64 = get_base64_of_bin_file("image5.png")
+
+if img_base64:
+    page_bg_img = f'''
+    <style>
+    [data-testid="stAppViewContainer"] {{
+        background-image: url("data:image/png;base64,{img_base64}");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+    }}
+    /* Biele priesvitné pozadie pre obsah */
+    [data-testid="stMainBlockContainer"] {{
+        background-color: rgba(255, 255, 255, 0.85);
+        padding: 2rem;
+        border-radius: 15px;
+    }}
+    </style>
+    '''
+    st.markdown(page_bg_img, unsafe_allow_html=True)
+
+# --- INICIALIZÁCIA ---
 if 'user' not in st.session_state:
     st.session_state['user'] = None
-
 
 # --- API ---
 def call_script(action, params=None):
     if params is None:
         params = {}
     params['action'] = action
-
     try:
         return requests.get(SCRIPT_URL, params=params, timeout=40).json()
     except:
         return {}
 
-
 @st.cache_data(ttl=300)
 def get_regions():
     res = call_script("getRegions")
     return res.get("regions", [])
-
 
 @st.cache_data(ttl=300)
 def get_data():
@@ -36,7 +67,6 @@ def get_data():
     except:
         return pd.DataFrame()
 
-
 @st.cache_data(ttl=300)
 def get_users():
     try:
@@ -44,10 +74,8 @@ def get_users():
     except:
         return pd.DataFrame()
 
-
 # --- LOGIN / REGISTER ---
 if st.session_state['user'] is None:
-    # ZMENENÝ NÁZOV PROJEKTU
     st.title("💰 Zarob si s TEPUJEM.SK")
 
     tab1, tab2 = st.tabs(["Prihlásenie", "Registrácia"])
@@ -88,7 +116,6 @@ if st.session_state['user'] is None:
                         get_users.clear() 
                         st.success("Hotovo. Teraz sa môžete prihlásiť.")
 
-
 # --- DASHBOARD ---
 else:
     u = st.session_state['user']
@@ -112,35 +139,28 @@ else:
 
     # --- JOIN USERS ---
     if not users.empty:
-        # Pripájame zľavový kód k používateľovi a ťaháme si aj jeho "pobočku"
         users_renamed = users.rename(columns={
             'referral_code': 'kod_pouzity',
             'priezvisko': 'meno_user',
             'mobil': 'mobil_user',
             'meno': 'pobocka_odporucatela'
         })
-
         df = df.merge(
             users_renamed[['kod_pouzity', 'meno_user', 'mobil_user', 'pobocka_odporucatela']],
             on='kod_pouzity',
             how='left'
         )
     else:
-        # Poistka, ak by z nejakého dôvodu tabuľka users bola úplne prázdna
         df['pobocka_odporucatela'] = None
         df['meno_user'] = None
         df['mobil_user'] = None
 
-    # Vytvorenie finálneho stĺpca pre priradenie pobočky 
-    # (Ak je kód zadaný a spárovaný s users_data, dá pobočku odporúčateľa. Inak použije tú z tabuľky transactions_data)
     df['pridelena_pobocka'] = df['pobocka_odporucatela'].fillna(df['pobocka_id'])
-
 
     # --- ADMIN ---
     if u['rola'] in ['admin', 'superadmin']:
         st.title(f"📊 Správa - {u.get('pobocka_id')}")
 
-        # Filtrujeme dáta podľa nášho "inteligentného" stĺpca 'pridelena_pobocka'
         if u['rola'] == 'superadmin':
             active_df = df 
         else:
@@ -148,10 +168,8 @@ else:
 
         t1, t2 = st.tabs(["Na nacenenie", "Na vyplatenie"])
 
-        # --- NACENENIE ---
         with t1:
             nac = active_df[active_df['suma_zakazky'] <= 0]
-
             if nac.empty:
                 st.success("Máte všetko nacenené! 👍")
             else:
@@ -161,7 +179,6 @@ else:
 
                     with st.expander(f"{meno} ({mobil}) - {row['poznamka']}"):
                         suma = st.number_input("Suma €", key=f"s_{i}", min_value=0.0, step=1.0)
-
                         if st.button("Uložiť", key=f"b_{i}"):
                             call_script("updateSuma", {
                                 "row_index": row['row_index'],
@@ -170,22 +187,17 @@ else:
                             get_data.clear()
                             st.rerun()
 
-        # --- VYPLATENIE ---
         with t2:
             pay = active_df[(active_df['suma_zakazky'] > 0) & (~active_df['vyplatene_bool'])]
-
             if pay.empty:
                 st.info("Nič na vyplatenie.")
             else:
                 for kod in pay['kod_pouzity'].unique():
                     p_data = pay[pay['kod_pouzity'] == kod]
-
                     meno = p_data['meno_user'].iloc[0] if not p_data['meno_user'].isna().all() else "Neznámy"
                     mobil = p_data['mobil_user'].iloc[0] if not p_data['mobil_user'].isna().all() else ""
 
                     with st.expander(f"{meno} ({mobil}) | Spolu na výplatu: {p_data['provizia_odporucatel'].sum():.2f} €"):
-                        
-                        # Pekné zobrazenie v tabuľke pred vyplatením
                         disp_pay = p_data.copy()
                         disp_pay['Suma provízie'] = disp_pay['provizia_odporucatel'].apply(lambda x: f"{x:.2f} €")
                         disp_pay.rename(columns={'poznamka': 'Poznámka'}, inplace=True)
@@ -200,7 +212,6 @@ else:
     # --- PARTNER (Odporúčateľ) ---
     else:
         st.title("💰 Môj prehľad")
-
         my_df = df[df['kod_pouzity'] == u['kod']]
 
         st.metric("Zarobené celkovo", f"{my_df['provizia_odporucatel'].sum():.2f} €")
@@ -209,17 +220,8 @@ else:
         if my_df.empty:
             st.write("Zatiaľ nemáte žiadne odporúčania.")
         else:
-            # Vytvoríme si kópiu dát na zobrazenie pre partnera
             display_df = my_df.copy()
-            
-            # Formátujeme zárobok na 2 desatinné miesta so znakom €
             display_df['Zárobok'] = display_df['provizia_odporucatel'].apply(lambda x: f"{x:.2f} €")
-            
-            # Vytvoríme stĺpec Vyplatené (áno / čaká sa) podľa hodnoty z vyplatene_bool
             display_df['Vyplatené'] = display_df['vyplatene_bool'].apply(lambda x: "áno" if x else "čaká sa")
-            
-            # Premenujeme stĺpec poznamka
             display_df.rename(columns={'poznamka': 'Poznámka'}, inplace=True)
-            
-            # Zobrazíme iba vybrané stĺpce v správnom poradí
             st.table(display_df[['Poznámka', 'Zárobok', 'Vyplatené']])
