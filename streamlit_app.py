@@ -138,7 +138,7 @@ if st.session_state['user'] is None:
             adresa = st.text_input("Adresa + Mesto")
             mob = st.text_input("Mobilné číslo (formát 09XXXXXXXX)")
             hes = st.text_input("Heslo", type="password")
-            kod = st.text_input("Vlastný kód")
+            kod = st.text_input("Vlastný zľavový kód na 5% zľavu")
             
             if st.form_submit_button("Registrovať"):
                 if not validate_mobile(mob):
