@@ -18,7 +18,7 @@ def get_base64_of_bin_file(bin_file):
     except FileNotFoundError:
         return None
 
-# --- CSS PRE VZHĽAD (Kontrast a Centrovanie) ---
+# --- CSS PRE VZHĽAD (DARK KARTA + SVETLÉ INPUTY) ---
 img_base64 = get_base64_of_bin_file("image5.png")
 
 css = """
@@ -31,29 +31,50 @@ css = """
     background-attachment: fixed;
 }
 
-/* Tmavý filter na pozadie, aby obrázok nebol rušivý */
+/* Tmavý filter na pozadie */
 [data-testid="stAppViewContainer"]::before {
     content: "";
     position: absolute;
     top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0, 0, 0, 0.5); 
+    background: rgba(0, 0, 0, 0.6); 
     pointer-events: none;
 }
 
-/* Biela nepriehľadná karta pre obsah */
+/* Tmavá karta pre obsah */
 [data-testid="stMainBlockContainer"] {
     max-width: 600px !important; 
-    background-color: white !important; 
+    background-color: #1e1e1e !important; 
     padding: 30px !important;
     border-radius: 20px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.8);
     margin-top: 50px;
-    color: #333333 !important;
+    color: white !important;
 }
 
-/* Vynútenie čierneho textu vnútri karty */
-[data-testid="stMainBlockContainer"] * {
-    color: #333333 !important;
+/* Texty vnútri karty */
+[data-testid="stMainBlockContainer"] h1, 
+[data-testid="stMainBlockContainer"] label, 
+[data-testid="stMainBlockContainer"] div {
+    color: white !important;
+}
+
+/* Input polia - Biele pozadie, čierny text */
+input {
+    background-color: white !important;
+    color: black !important;
+}
+
+/* Tlačidlá - Biele pozadie, čierny text */
+button {
+    background-color: white !important;
+    color: black !important;
+    font-weight: bold !important;
+    border: none !important;
+}
+
+/* Tab výbery - zmena farby písma */
+[data-baseweb="tab"] {
+    color: white !important;
 }
 </style>
 """
