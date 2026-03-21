@@ -175,18 +175,28 @@ if st.session_state['user'] is None:
 
         with t_reg:
             with st.form("auth_reg"):
-                pob = st.selectbox("Pobočka", ["celý Liptov", "Malacky", "Levice", "Bratislava, Trnava, Senec", "Vranov a Košice"])
+                pob_reg = st.selectbox("Pobočka", ["celý Liptov", "Malacky", "Levice", "Bratislava, Trnava, Senec", "Vranov a Košice"])
                 c1, c2 = st.columns(2)
-                men = c1.text_input("Meno")
-                pri = c2.text_input("Priezvisko")
-                mob = st.text_input("Mobil")
-                hes = st.text_input("Heslo", type="password")
-                kod = st.text_input("Vlastný referral kód")
+                men_reg = c1.text_input("Meno")
+                pri_reg = c2.text_input("Priezvisko")
+                mes_reg = st.text_input("Mesto / Obec") # PRIDANÉ POLE MESTO
+                mob_reg = st.text_input("Mobil (09XXXXXXXX)")
+                hes_reg = st.text_input("Heslo", type="password")
+                kod_reg = st.text_input("Vlastný referral kód (napr. ZLAVA10)")
                 if st.form_submit_button("ZAREGISTROVAŤ SA"):
-                    if all([men, pri, mob, hes, kod]) and validate_mobile(mob):
-                        res = call_script("register", {"pobocka": pob, "meno": men, "priezvisko": pri, "mobil": mob, "heslo": hes, "kod": kod})
+                    if all([men_reg, pri_reg, mes_reg, mob_reg, hes_reg, kod_reg]) and validate_mobile(mob_reg):
+                        res = call_script("register", {
+                            "pobocka": pob_reg, 
+                            "meno": men_reg, 
+                            "priezvisko": pri_reg, 
+                            "mesto": mes_reg, # ODOSIELANIE MESTA
+                            "mobil": mob_reg, 
+                            "heslo": hes_reg, 
+                            "kod": kod_reg
+                        })
                         if res.get("status") == "success": st.success("🎉 Úspešne registrovaný!")
-                    else: st.warning("⚠️ Vyplňte všetky polia správne.")
+                        else: st.error(f"❌ Chyba: {res.get('message')}")
+                    else: st.warning("⚠️ Vyplňte všetky polia správne a skontrolujte formát mobilu.")
 
 # =================================================================
 # 6. DASHBOARD
@@ -260,7 +270,7 @@ else:
         # --- ROZHRANIE PRE PARTNERA ---
         else:
             st.title("💰 Moje Provízie")
-            my_df = df[df['kod_pouzity'] == u['kod']]
+            my_df = df[df['kod_pouzity'] == u['referral_code']]
             c1, c2, c3 = st.columns(3)
             c1.metric("Zarobené", format_currency(my_df['provizia_odporucatel'].sum()))
             c2.metric("K výplate", format_currency(my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum()))
@@ -269,4 +279,4 @@ else:
             p_cols = [c for c in ['mesto', 'poznamka', 'suma_zakazky', 'provizia_odporucatel', 'vyplatene'] if c in my_df.columns]
             st.dataframe(my_df[p_cols], use_container_width=True, hide_index=True)
 
-    st.caption(f"© {datetime.now().year} TEPUJEM.SK Enterprise | v6.2.0-ULTIMATE")
+    st.caption(f"© {datetime.now().year} TEPUJEM.SK Enterprise | v6.5.0")
