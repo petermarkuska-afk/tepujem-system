@@ -64,9 +64,11 @@ def call_script(action, params=None):
 @st.cache_data(ttl=600)
 def get_full_data():
     try:
+        # Načítanie zákaziek
         z_res = requests.get(f"{SCRIPT_URL}?action=getZakazky&token={API_TOKEN}").json()
         df_z = pd.DataFrame(z_res)
         
+        # Načítanie užívateľov (adminov/partnerov)
         u_res = requests.get(f"{SCRIPT_URL}?action=getUsers&token={API_TOKEN}").json()
         df_u = pd.DataFrame(u_res)
         
@@ -80,14 +82,13 @@ def get_full_data():
             if col in df_z.columns:
                 df_z[col] = pd.to_numeric(df_z[col], errors='coerce').fillna(0)
         
-        # Logika pre stav 'vyplatene' (v Exceli stĺpec G)
+        # Logika pre stav 'vyplatene' (stĺpec G v Google Sheets)
         if 'vyplatene' in df_z.columns:
-            # Akceptujeme TRUE, 1, YES
             df_z['vyplatene_bool'] = df_z['vyplatene'].astype(str).str.strip().str.upper().isin(["TRUE", "1", "YES"])
         else:
             df_z['vyplatene_bool'] = False
         
-        # Indexovanie riadkov pre spätný zápis do Google Sheets
+        # Indexovanie riadkov pre spätný zápis (začíname od 2 kvôli hlavičke v Sheets)
         if 'row_index' not in df_z.columns:
             df_z['row_index'] = range(2, len(df_z) + 2)
 
@@ -156,6 +157,9 @@ st.markdown(f"""
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
+# Načítame dáta pre dynamický zoznam pobočiek v registrácii
+df_main, df_users_db = get_full_data()
+
 if st.session_state['user'] is None:
     _, col_login, _ = st.columns([1, 2, 1])
     with col_login:
@@ -179,7 +183,14 @@ if st.session_state['user'] is None:
 
         with t_reg:
             with st.form("auth_reg"):
-                pob_reg = st.selectbox("Pobočka", ["celý Liptov", "Malacky", "Levice", "Bratislava, Trnava, Senec", "Vranov a Košice"])
+                # DYNAMICKÝ VÝBER POBOČKY (Ťahá unikátne pobočky z databázy užívateľov)
+                if not df_users_db.empty and 'pobocka' in df_users_db.columns:
+                    list_branches = sorted(df_users_db['pobocka'].unique().tolist())
+                else:
+                    list_branches = ["celý Liptov", "Malacky", "Levice", "Bratislava, Trnava, Senec", "Vranov a Košice"]
+                
+                pob_reg = st.selectbox("Pobočka", list_branches)
+                
                 c1, c2 = st.columns(2)
                 men_reg = c1.text_input("Meno")
                 pri_reg = c2.text_input("Priezvisko")
@@ -223,19 +234,17 @@ else:
             st.session_state['user'] = None
             st.rerun()
 
-    df, _ = get_full_data()
-
-    if not df.empty:
+    # Použijeme už načítané dáta (df_main)
+    if not df_main.empty:
         # --- ROZHRANIE PRE ADMINA / SUPERADMINA ---
         if u.get('rola') in ['admin', 'superadmin']:
             st.title("📊 Administrácia systému")
             # Filtrovanie dát podľa pobočky admina (superadmin vidí všetko)
-            view_df = df if u['rola'] == 'superadmin' else df[df['p_pobocka'] == u['pobocka']]
+            view_df = df_main if u['rola'] == 'superadmin' else df_main[df_main['p_pobocka'] == u['pobocka']]
 
             # Metriky
             m1, m2, m3 = st.columns(3)
             m1.metric("Obrat Celkom", format_currency(view_df['suma_zakazky'].sum()))
-            # Provízie k výplate sú tie, kde vyplatene_bool je FALSE a suma > 0
             k_vyplate = view_df[(view_df['suma_zakazky'] > 0) & (~view_df['vyplatene_bool'])]['provizia_odporucatel'].sum()
             m2.metric("Provízie k úhrade", format_currency(k_vyplate))
             m3.metric("Počet zákaziek", len(view_df))
@@ -287,26 +296,27 @@ else:
                                 st.success(f"Kód {k} bol spracovaný.")
                                 time.sleep(0.5)
                                 st.rerun()
-                            st.dataframe(sub[['mesto', 'suma_zakazky', 'provizia_odporucatel']], use_container_width=True, hide_index=True)
+                            # Dynamická kontrola stĺpcov pre zobrazenie
+                            cols_to_disp = [c for c in ['mesto', 'suma_zakazky', 'provizia_odporucatel'] if c in sub.columns]
+                            st.dataframe(sub[cols_to_disp], use_container_width=True, hide_index=True)
 
             with t3:
-                # Všetky zákazky pre prehľad
-                cols_to_show = ['mesto', 'kod_pouzity', 'poznamka', 'suma_zakazky', 'provizia_odporucatel', 'vyplatene']
-                available_cols = [c for c in cols_to_show if c in view_df.columns]
+                # Všetky zákazky pre prehľad (Archív)
+                all_cols = ['mesto', 'kod_pouzity', 'poznamka', 'suma_zakazky', 'provizia_odporucatel', 'vyplatene']
+                available_cols = [c for c in all_cols if c in view_df.columns]
                 st.dataframe(view_df[available_cols], use_container_width=True, hide_index=True)
 
         # --- ROZHRANIE PRE PARTNERA ---
         else:
             st.title("💰 Moje Provízie")
-            # Dôležité: Používame kľúč 'kod' zo session_state, ktorý sme dostali pri logine
+            # Používame kód 'kod', ktorý sme dostali pri prihlásení
             my_code = u.get('kod')
-            my_df = df[df['kod_pouzity'] == my_code]
+            my_df = df_main[df_main['kod_pouzity'] == my_code]
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Zarobené celkom", format_currency(my_df['provizia_odporucatel'].sum()))
-            # Len nevyplatené provízie
-            unpaid = my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum()
-            c2.metric("Čaká na výplatu", format_currency(unpaid))
+            unpaid_val = my_df[~my_df['vyplatene_bool']]['provizia_odporucatel'].sum()
+            c2.metric("Čaká na výplatu", format_currency(unpaid_val))
             c3.metric("Počet odporúčaní", len(my_df))
             
             st.divider()
@@ -318,6 +328,6 @@ else:
                 st.dataframe(my_df[available_p_cols], use_container_width=True, hide_index=True)
 
     else:
-        st.warning("Dáta sa nepodarilo načítať alebo sú prázdne.")
+        st.warning("Dáta sú prázdne alebo sa ich nepodarilo načítať.")
 
-    st.caption(f"© {datetime.now().year} TEPUJEM.SK Enterprise System | v6.7.0")
+    st.caption(f"© {datetime.now().year} TEPUJEM.SK Enterprise System | v6.9.0")
